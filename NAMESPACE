@@ -1,0 +1,10 @@
+import(stats,Matrix)
+export(
+      mclogit,
+      mclogit.control
+)
+S3method(print,mclogit)
+S3method(vcov,mclogit)
+S3method(summary,mclogit)
+S3method(print,summary.mclogit)
+
