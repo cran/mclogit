@@ -1,12 +1,37 @@
 # require(methods)
 # if(!require(Matrix)) warning("mclogit with random effects won't work without Matrix package")
 
+quickInteraction <- function(by){
+  if(is.list(by)){
+    n.arg <- length(by)
+    f <- 0L
+    uf <- 0L
+    for(i in rev(1:n.arg)){
+      y <- by[[i]]
+      y <- as.numeric(y)
+      uy <- unique(na.omit(y))
+      y <- match(y,uy,NA)
+      l <- length(uy)
+      f <- f*l + y - 1
+      uf <- unique(na.omit(f))
+      f <- match(f,uf,NA)
+      uf <- seq(length(uf))
+    }
+  }
+  else {
+    by <- as.numeric(by)
+    uf <- unique(na.omit(by))
+    f <- match(by,uf,NA)
+    uf <- seq(length(uf))
+  }
+  return(structure(f,unique=uf))
+}
 
 constInSets <- function(X,sets){
     ans <- integer(0)
     for(i in 1:ncol(X)){
         v <- tapply(X[,i],sets,var)
-        if(all(v==0)) ans <- c(ans,i)
+        if(all(v[is.finite(v)]==0)) ans <- c(ans,i)
     }
     names(ans) <- colnames(X)[ans]
     ans
@@ -122,11 +147,12 @@ mclogit <- function(
                       na.action = na.action,
                       prior.weights=prior.weights,
                       weights=weights,
+                      model=mf,
                       N=N))
     if(length(random))
-        class(fit) <- c("mclogitRandeff","mclogit")
+        class(fit) <- c("mclogitRandeff","mclogit","lm")
     else
-        class(fit) <- "mclogit"
+        class(fit) <- c("mclogit","lm")
     fit
 }
 
@@ -228,7 +254,8 @@ mclogit.fit <- function(
    null.deviance <- sum(mclogit.dev.resids(Y,P0,w))
    resid.df <- length(Y)#-length(unique(s))
    model.df <- ncol(X)
-   phi <- sum(w/P*(Y-P)^2)/(resid.df-model.df)
+   resid.df <- resid.df - model.df
+   phi <- sum(w/P*(Y-P)^2)/resid.df
    return(list(
       coefficients = drop(coef),
       linear.predictors = eta,
@@ -530,7 +557,8 @@ mclogit.fit.random <- function(
    B <- as.matrix(B)
    resid.df <- length(Y)#-length(unique(s))
    model.df <- ncol(X) + length(theta)
-   phi <- sum(w/P*(Y-P)^2)/(resid.df-model.df)
+   resid.df <- resid.df-model.df
+   phi <- sum(w/P*(Y-P)^2)/resid.df
    return(list(
       coefficients = drop(coef),
       varPar = theta,
@@ -580,10 +608,10 @@ reDesignMatrix <- function(random,data,use=NULL){
   gnames <- names(groups)
   n <- length(groups[[1]])
   nlev <- length(groups)
-  groups[[1]] <- memisc:::quickInteraction(groups[[1]])
+  groups[[1]] <- quickInteraction(groups[[1]])
   if(nlev>1)
     for(i in 2:nlev)
-      groups[[i]] <- memisc:::quickInteraction(groups[c(i-1,i)])
+      groups[[i]] <- quickInteraction(groups[c(i-1,i)])
   un <- length(attr(groups[[1]],"unique"))
   Z <- Matrix(0,nrow=n,ncol=un,dimnames=list(NULL,paste(gnames[1],seq(un),sep="")))
   ij <- cbind(1:n,groups[[1]])
@@ -671,10 +699,14 @@ weights.mclogit <- function(object,...){
   return(object$weights)
 }
 
+deviance.mclogit <- function(object,...){
+  return(object$deviance)
+}
+
 summary.mclogit <- function(object,dispersion=NULL,correlation = FALSE, symbolic.cor = FALSE,...){
 
     if(!length(dispersion))
-        dispersion <- object$phi
+        dispersion <- max(object$phi,1)
 
 
     ## calculate coef table
@@ -864,7 +896,7 @@ getSummary.mclogit <- function(obj,
               })
           rownames(coef.groups[[g]]) <- newnames
         }
-      coef.groups <- memisc:::comb.arrays(coef.groups)
+      coef.groups <- memisc:::clct.arrays(coef.groups)
       coef.ungrouped <- coef[ungrouped,]
       coef <- array(NA,dim=c(
         dim(coef.groups)[1] + nrow(coef.ungrouped)+NROW(varPar),
@@ -985,3 +1017,4 @@ predict.mclogit <- function(object, newdata,type=c("link","response"),se=FALSE,.
   }
   else if(se) list(pred=eta,se.pred=se.eta) else eta
 }
+
