@@ -1,17 +1,16 @@
-.First.lib <- .onLoad <- function(lib,pkg){
-  if(require(memisc)){
+.onLoad <- function(lib,pkg){
     setSummaryTemplate(
       mclogit = c(
-              #"McFadden R-sq." = "($McFadden:f#)",
-              #"Cox-Snell R-sq." = "($Cox.Snell:f#)",
-              #"Nagelkerke R-sq."  = "($Nagelkerke:f#)",
+              "McFadden R-sq." = "($McFadden:f#)",
+              "Cox-Snell R-sq." = "($Cox.Snell:f#)",
+              "Nagelkerke R-sq."  = "($Nagelkerke:f#)",
               Dispersion         = "($phi:#)",
               "Likelihood-ratio" = "($LR:f1#)",
               #p             = "($p:#)",
-              #"Log-likelihood" = "($logLik:f1#)",
+              "Log-likelihood" = "($logLik:f1#)",
               Deviance      = "($deviance:f1#)",
-              #AIC           = "($AIC:f1#)",
-              #BIC           = "($BIC:f1#)",
+              AIC           = "($AIC:f1#)",
+              BIC           = "($BIC:f1#)",
               N             = "($N:d)"
       ),
       mclogitRandeff = c(
@@ -28,6 +27,5 @@
               N             = "($N:d)"
       )
     )
-  }
 }
 

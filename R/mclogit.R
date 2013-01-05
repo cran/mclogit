@@ -256,6 +256,7 @@ mclogit.fit <- function(
    model.df <- ncol(X)
    resid.df <- resid.df - model.df
    phi <- sum(w/P*(Y-P)^2)/resid.df
+   ll <- mclogit.logLik(Y,P,w)
    return(list(
       coefficients = drop(coef),
       linear.predictors = eta,
@@ -264,6 +265,7 @@ mclogit.fit <- function(
       model.df = model.df,
       fitted.values = P,
       deviance=deviance,
+      ll=ll,
       deviance.residuals=dev.resids,
       null.deviance=null.deviance,
       iter = iter,
@@ -566,6 +568,7 @@ mclogit.fit.random <- function(
       random.effects = reff,
       linear.predictors = eta,
       fitted.values = P,
+      ll=NA,
       deviance=deviance,
       deviance.residuals=dev.resids,
       residuals=(Y-P)/P,
@@ -661,6 +664,9 @@ mclogit.dev.resids <- function(y,p,w)
                 2*w*y*(log(y)-log(p)),
                 0)
 
+mclogit.logLik <- function(y,p,w) sum(w*y*log(p))
+                
+                
 mclogitLinkInv <- function(y,s,w){
   n.alt <- tapply(y,s,length)
   c(log(sqrt(w)*y+1/n.alt[s])-log(w)/2)
@@ -795,7 +801,7 @@ print.summary.mclogit <-
         if(p > 1) {
             cat("\nCorrelation of Coefficients:\n")
             if(is.logical(symbolic.cor) && symbolic.cor) {
-                print(symnum(correl, abbr.col = NULL))
+                print(symnum(correl, abbr.colnames = NULL))
             } else {
                 correl <- format(round(correl, 2), nsmall = 2, digits = digits)
                 correl[!lower.tri(correl)] <- ""
@@ -813,7 +819,7 @@ print.summary.mclogit <-
 getSummary.mclogit <- function(obj,
             alpha=.05,
             rearrange=NULL,
-            as.columns=NULL,
+            #as.columns=NULL,
             ...){
 
   smry <- summary(obj)
@@ -857,64 +863,64 @@ getSummary.mclogit <- function(obj,
          grp.titles
          )
     }
-    else if(length(as.columns)){
-      #groupix <- sapply(as.columns,grep,rownames(coef),simplify=FALSE)
-      groupix <- sapply(as.columns,function(patrn) if(is.atomic(patrn))
-                                       which(memisc:::str.has(rownames(coef),patrn))
-                                      else
-                                       which(do.call(memisc:::str.has,
-                                           c(list(rownames(coef)),patrn)
-                                           )),
-                          simplify=FALSE
-                          )
-      grp.titles <- if(length(names(as.columns))) names(as.columns)
-          else if(is.atomic(as.columns)) as.columns
-          else sapply(as.columns,function(patrn)
-                                  if(is.atomic(patrn))
-                                      paste(patrn,collapse=":")
-                                  else paste(patrn[[1]],collapse=":")
-                              )
-      ii <- sapply(groupix,length)>0
-      groupix <- groupix[ii]
-      as.columns <- as.columns[ii]
-      grouped <- unlist(groupix)
-      ungrouped <- setdiff(seq(nrow(coef)),grouped)
-      max.glen <- max(sapply(groupix,length))
-      n.grp <- length(groupix)
-      coef.groups <- lapply(groupix,function(i)coef[i,,drop=FALSE])
-      for(g in 1:n.grp){
-          newnames <- rownames(coef.groups[[g]])
-          newnames <- strsplit(newnames,":")
-          patrn <- as.columns[[g]]
-          newnames <- lapply(newnames,function(x){
-                if(is.atomic(patrn))
-                  hasit <- memisc:::str.has(x,patrn)
-                else
-                  hasit <- memisc:::str.has(x,patrn[[1]],not=patrn$not)
-                x <- x[!hasit]
-                if(length(x)) paste(x,collapse=":") else "Main effect"
-              })
-          rownames(coef.groups[[g]]) <- newnames
-        }
-      coef.groups <- memisc:::clct.arrays(coef.groups)
-      coef.ungrouped <- coef[ungrouped,]
-      coef <- array(NA,dim=c(
-        dim(coef.groups)[1] + nrow(coef.ungrouped)+NROW(varPar),
-        dim(coef.groups)[2],
-        dim(coef.groups)[3]
-        ))
-      coef[seq(dim(coef.groups)[1]),,] <- coef.groups
-      if(nrow(coef.ungrouped))
-        coef[dim(coef.groups)[1]+seq(nrow(coef.ungrouped)),,1] <- coef.ungrouped
-      if(length(varPar))
-        coef[dim(coef.groups)[1]+nrow(coef.ungrouped)+seq(nrow(varPar)),,1] <- varPar
-      dimnames(coef) <- list(
-          c(dimnames(coef.groups)[[1]],rownames(coef.ungrouped),rownames(varPar)),
-          dimnames(coef.groups)[[2]],
-          grp.titles
-          )
-      }
-      else {
+#     else if(length(as.columns)){
+#       #groupix <- sapply(as.columns,grep,rownames(coef),simplify=FALSE)
+#       groupix <- sapply(as.columns,function(patrn) if(is.atomic(patrn))
+#                                        which(memisc:::str.has(rownames(coef),patrn))
+#                                       else
+#                                        which(do.call(memisc:::str.has,
+#                                            c(list(rownames(coef)),patrn)
+#                                            )),
+#                           simplify=FALSE
+#                           )
+#       grp.titles <- if(length(names(as.columns))) names(as.columns)
+#           else if(is.atomic(as.columns)) as.columns
+#           else sapply(as.columns,function(patrn)
+#                                   if(is.atomic(patrn))
+#                                       paste(patrn,collapse=":")
+#                                   else paste(patrn[[1]],collapse=":")
+#                               )
+#       ii <- sapply(groupix,length)>0
+#       groupix <- groupix[ii]
+#       as.columns <- as.columns[ii]
+#       grouped <- unlist(groupix)
+#       ungrouped <- setdiff(seq(nrow(coef)),grouped)
+#       max.glen <- max(sapply(groupix,length))
+#       n.grp <- length(groupix)
+#       coef.groups <- lapply(groupix,function(i)coef[i,,drop=FALSE])
+#       for(g in 1:n.grp){
+#           newnames <- rownames(coef.groups[[g]])
+#           newnames <- strsplit(newnames,":")
+#           patrn <- as.columns[[g]]
+#           newnames <- lapply(newnames,function(x){
+#                 if(is.atomic(patrn))
+#                   hasit <- memisc:::str.has(x,patrn)
+#                 else
+#                   hasit <- memisc:::str.has(x,patrn[[1]],not=patrn$not)
+#                 x <- x[!hasit]
+#                 if(length(x)) paste(x,collapse=":") else "Main effect"
+#               })
+#           rownames(coef.groups[[g]]) <- newnames
+#         }
+#       coef.groups <- memisc:::clct.arrays(coef.groups)
+#       coef.ungrouped <- coef[ungrouped,]
+#       coef <- array(NA,dim=c(
+#         dim(coef.groups)[1] + nrow(coef.ungrouped)+NROW(varPar),
+#         dim(coef.groups)[2],
+#         dim(coef.groups)[3]
+#         ))
+#       coef[seq(dim(coef.groups)[1]),,] <- coef.groups
+#       if(nrow(coef.ungrouped))
+#         coef[dim(coef.groups)[1]+seq(nrow(coef.ungrouped)),,1] <- coef.ungrouped
+#       if(length(varPar))
+#         coef[dim(coef.groups)[1]+nrow(coef.ungrouped)+seq(nrow(varPar)),,1] <- varPar
+#       dimnames(coef) <- list(
+#           c(dimnames(coef.groups)[[1]],rownames(coef.ungrouped),rownames(varPar)),
+#           dimnames(coef.groups)[[2]],
+#           grp.titles
+#           )
+#       }
+    else {
       .coef <- coef
       coef <- matrix(NA,nrow=nrow(.coef)+NROW(varPar),ncol=ncol(.coef))
       coef[seq(nrow(.coef)),] <- .coef
@@ -928,7 +934,7 @@ getSummary.mclogit <- function(obj,
    phi <- smry$phi
    LR <- smry$null.deviance - smry$deviance
 #   df <- smry$df.null - smry$df.residual
-  df <- length(obj$coef) + length(obj$varPar)
+  df <- obj$model.df
   deviance <- deviance(obj)
 
 
@@ -950,20 +956,21 @@ getSummary.mclogit <- function(obj,
     Nagelkerke <- NA
     }
 
-  #AIC <- AIC(obj)
-  #BIC <- AIC(obj,k=log(N))
+  ll <- obj$ll
+  AIC <- AIC(obj)
+  BIC <- AIC(obj,k=log(N))
   sumstat <- c(
           phi         = phi,
           LR             = LR,
-          #df         = df,
+          df         = df,
           #p             = p,
-          #logLik        = ll,
+          logLik        = ll,
           deviance      = deviance,
           McFadden      = McFadden,
           Cox.Snell       = Cox.Snell,
           Nagelkerke    = Nagelkerke,
-          #AIC           = AIC,
-          #BIC           = BIC,
+          AIC           = AIC,
+          BIC           = BIC,
           N             = N
           )
 
@@ -1018,3 +1025,14 @@ predict.mclogit <- function(object, newdata,type=c("link","response"),se=FALSE,.
   else if(se) list(pred=eta,se.pred=se.eta) else eta
 }
 
+logLik.mclogit <- function(object,...){
+    if (length(list(...)))
+        warning("extra arguments discarded")
+    val <- if(length(object$ll))
+            object$ll
+           else NA
+    attr(val, "nobs") <- object$N
+    attr(val, "df") <- object$model.df
+    class(val) <- "logLik"
+    return(val)
+}
