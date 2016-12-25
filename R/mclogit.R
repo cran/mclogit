@@ -44,6 +44,7 @@ mclogit <- function(
                 na.action = getOption("na.action"),
                 model = TRUE, x = FALSE, y = TRUE,
                 contrasts=NULL,
+                start=NULL,
                 start.theta=NULL,
                 control=mclogit.control(...),
                 ...
@@ -100,8 +101,19 @@ mclogit <- function(
         warning("removing ",paste(names(const),collapse=",")," from model")
         X <- X[,-const,drop=FALSE]
     }
+    if(!length(start)){
+      drop.coefs <- check.mclogit.drop.coefs(Y,sets,weights,X,
+                                             offset = offset)
+      if(any(drop.coefs)){
+        warning("removing ",paste(colnames(X)[drop.coefs],collapse=",")," from model")
+        X <- X[,!drop.coefs,drop=FALSE]
+      }
+    }
+    
+    
     fit <- mclogit.fit(Y,sets,weights,X,
                         control=control,
+                        start = start,
                         offset = offset)
     null.dev <- fit$null.deviance
     if(length(random)){ ## random effects
@@ -149,6 +161,27 @@ mclogit <- function(
     fit
 }
 
+
+check.mclogit.drop.coefs <- function(y,
+                                     s,
+                                     w,
+                                     X,
+                                     offset){
+  nvar <- ncol(X)
+  nobs <- length(y)
+  if(!length(offset))
+    offset <- rep.int(0, nobs)
+  eta <- mclogitLinkInv(y,s,w)
+  pi <- mclogitP(eta,s)
+  y.star <- eta - offset + (y-pi)/pi
+  yP.star <- y.star - rowsum(pi*y.star,s)[s]
+  XP <- X - rowsum(pi*X,s)[s,,drop=FALSE]
+  ww <- w*pi
+  good <- ww > 0
+  wlsFit <- lm.wfit(x=XP[good,,drop=FALSE],y=yP.star[good],w=ww[good])  
+  is.na(wlsFit$coef)
+}
+
 mclogit.fit <- function(
       y,
       s,
@@ -159,13 +192,20 @@ mclogit.fit <- function(
       control=mclogit.control()
       ){
     nvar <- ncol(X)
-    deviance <- Inf
-    eta <- mclogitLinkInv(y,s,w)
-    nobs <- length(eta)
-    if (is.null(offset))
-        offset <- rep.int(0, nobs)
-
+    nobs <- length(y)
+    if(!length(offset))
+      offset <- rep.int(0, nobs)
+    if(length(start)){
+      stopifnot(length(start)==ncol(X))
+      eta <- c(X%*%start) + offset
+    }
+    else
+      eta <- mclogitLinkInv(y,s,w)
     pi <- mclogitP(eta,s)
+    dev.resids <- ifelse(y>0,
+                         2*w*y*(log(y)-log(pi)),
+                         0)
+    deviance <- sum(dev.resids)
     if(length(start))
       last.coef <- start
     else last.coef <- NULL
@@ -173,7 +213,7 @@ mclogit.fit <- function(
     for(iter in 1:control$maxit){
         y.star <- eta - offset + (y-pi)/pi
         yP.star <- y.star - rowsum(pi*y.star,s)[s]
-        XP <- X - rowsum(pi*X,s)[s,,drop=FALSE]
+        XP <- X - as.matrix(rowsum(pi*X,s))[s,,drop=FALSE]
         ww <- w*pi
         good <- ww > 0
         wlsFit <- lm.wfit(x=XP[good,,drop=FALSE],y=yP.star[good],w=ww[good])
@@ -219,11 +259,11 @@ mclogit.fit <- function(
     }
     if (!converged) warning("algorithm did not converge")
     if (boundary) warning("algorithm stopped at boundary value")
-    eps <- 10*.Machine$double.eps
-    if (any(pi < eps) || any(1-pi < eps))
-        warning("fitted probabilities numerically 0 occurred")
+    #eps <- 10*.Machine$double.eps
+    #if (any(pi < eps) || any(1-pi < eps))
+    #    warning("fitted probabilities numerically 0 occurred")
 
-    XP <- X - rowsum(pi*X,s)[s,,drop=FALSE]
+    XP <- X - as.matrix(rowsum(pi*X,s))[s,,drop=FALSE]
     ww <- w*pi
     Information <- crossprod(XP,ww*XP)
         
@@ -277,11 +317,13 @@ mclogit.fit.rePQL <- function(
       ){
     #crossprod <- Matrix:::crossprod
     nvar <- ncol(X)
+    nobs <- length(y)
+    if(!length(offset))
+      offset <- rep.int(0, nobs)
+    
     deviance <- Inf
     eta <- mclogitLinkInv(y,s,w)
-    nobs <- length(eta)
-    if (is.null(offset))
-      offset <- rep.int(0, nobs)
+    
     lev.ics <- attr(Z,"col.indices")
     nlev <- length(lev.ics)
     sw <- c(tapply(w,s,"[",1))
@@ -480,7 +522,9 @@ mclogit.fit.rePQL <- function(
       covmat.theta <- solve(Info1.theta)
     }
 
-   
+   coef <- drop(coef)
+   covmat <- as.matrix(covmat)
+   colnames(covmat) <- rownames(covmat) <- names(coef)
 
    names(theta) <- names(lev.ics)
    colnames(covmat.theta) <- rownames(covmat.theta) <- names(theta)
@@ -490,7 +534,7 @@ mclogit.fit.rePQL <- function(
    model.df <- ncol(X) + length(theta)
    resid.df <- resid.df-model.df
    return(list(
-      coefficients = drop(coef),
+      coefficients = coef,
       varPar = theta,
       chisq.theta = chisq.theta,
       random.effects = reff,
@@ -627,7 +671,18 @@ print.mclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
     invisible(x)
 }
 
-vcov.mclogit <- function(object,...){
+vcov.mclogit <- function(object,varPar=TRUE,...){
+  if(varPar && length(object$varPar)){
+    cm <- object$covmat
+    cmv <- object$covmat.varPar
+    nms <- colnames(cm)
+    nmsv <- paste0("Var(",colnames(cmv),")")
+    
+    v <- as.matrix(bdiag(cm,cmv))
+    colnames(v) <- rownames(v) <- c(nms,nmsv)
+    return(v)
+  }
+  else
     return(object$covmat)
 }
 
@@ -678,8 +733,8 @@ summary.mclogit <- function(object,dispersion=NULL,correlation = FALSE, symbolic
       varPar.table[,4] <- pvalue.vp
     } else varPar.table <- NULL
 
-    ans <- c(object[c("call","terms","baseline","deviance","contrasts",
-                       "null.deviance","iter","na.action","model.df","residual.df")],
+    ans <- c(object[c("call","terms","deviance","contrasts",
+                       "null.deviance","iter","na.action","model.df","residual.df","N")],
               list(coefficients = coef.table,
                     varPar = varPar.table,
                     cov.coef=object$covmat,
@@ -744,7 +799,7 @@ print.summary.mclogit <-
 
 fitted.mclogit <- function(object,type=c("probabilities","counts"),...){
   weights <- object$weights
-  nobs <- length(weights)
+  
   res <- object$fitted.values
   type <- match.arg(type)
   
@@ -760,54 +815,62 @@ fitted.mclogit <- function(object,type=c("probabilities","counts"),...){
     napredict(na.act,res)
 }
 
-predict.mclogit <- function(object, newdata=NULL,type=c("link","response"),se=FALSE,...){
+predict.mclogit <- function(object, newdata=NULL,type=c("link","response"),se.fit=FALSE,...){
 
   type <- match.arg(type)
   rhs <- object$formula[-2]
-  if(missing(newdata))
+  if(missing(newdata)){
     m <- model.frame(rhs,data=object$model)
-  else
+    na.act <- object$na.action
+  }
+  else{
     m <- model.frame(rhs,data=newdata)
+    na.act <- attr(m,"na.action")
+  }
   X <- model.matrix(rhs,m,
           contasts.arg=object$contrasts,
           xlev=object$xlevels
           )
   drop <- match("(Intercept)",colnames(X))
   X <- X[,-drop,drop=FALSE]
-  eta <- c(X %*% object$coef)
-  if(se){
-    stopifnot(dim(X) == dim(X %*% vcov(object)))
-    se.eta <- sqrt(rowSums(X * (X %*% vcov(object))))
+  eta <- c(X %*% coef(object))
+  if(se.fit){
+    V <- vcov(object)
+    stopifnot(ncol(X)==ncol(V))
   }
 
-  na.act <- object$na.action
   
   if(type=="response") {
     lhs <- object$formula[[2]]
     set <- lhs[[3]]
     set <- eval(set,newdata,parent.frame())
+    if(length(na.act))
+        set <- set[-na.act]
     set <- match(set,unique(set))
     exp.eta <- exp(eta)
     sum.exp.eta <- rowsum(exp.eta,set)
     p <- exp.eta/sum.exp.eta[set]
-    if(se){
+    if(se.fit){
+      wX <- p*(X - rowsum(p*X,set)[set,,drop=FALSE])
+      se.p <- sqrt(rowSums(wX * (wX %*% V)))
       if(is.null(na.act))
-        list(pred=p,se.pred=p*(1-p)*se.eta)
+        list(fit=p,se.fit=se.p)
       else
-        list(pred=napredict(na.act,p),
-             se.pred=napredict(na.act,p*(1-p)*se.eta))
+        list(fit=napredict(na.act,p),
+             se.fit=napredict(na.act,se.p))
     }
     else {
       if(is.null(na.act)) p
       else napredict(na.act,p)
     }
   }
-  else if(se) {
+  else if(se.fit) {
+    se.eta <- sqrt(rowSums(X * (X %*% V)))
     if(is.null(na.act))
-      list(pred=eta,se.pred=se.eta) 
+      list(fit=eta,se.fit=se.eta) 
     else
-      list(pred=napredict(na.act,eta),
-           se.pred=napredict(na.act,se.eta))
+      list(fit=napredict(na.act,eta),
+           se.fit=napredict(na.act,se.eta))
     }
   else {
     if(is.null(na.act)) eta
@@ -853,4 +916,25 @@ mclogit.dev.resids <- function(obj){
  #sign(y-p)*sqrt(2*abs(log(f)-log(y)))
  r <- 2*(f*log(f/pi))
  r - ave(r,s)
+}
+
+
+nobs.mclogit <- function(object,...) object$N
+
+extractAIC.mclogit <- function(fit, scale = 0, k = 2, ...) 
+{
+  N <- fit$N
+  edf <- N - fit$residual.df
+  aic <- AIC(fit)
+  c(edf, aic + (k - 2) * edf)
+}
+
+weights.mclogit <- function(object, type = c("prior", "working"),...) {
+  type <- match.arg(type)
+  res <- if (type == "prior") 
+    object$prior.weights
+  else object$weights
+  if (is.null(object$na.action)) 
+    res
+  else naresid(object$na.action, res)
 }
