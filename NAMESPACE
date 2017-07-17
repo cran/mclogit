@@ -4,7 +4,7 @@ importFrom(methods,as)
 export(
       mclogit,
       mclogit.fit,
-      mclogit.fit.rePQL,
+      mmclogit.fitPQL,
       mclogit.control,
       getSummary.mclogit,
       mblogit,
@@ -33,4 +33,10 @@ S3method(fitted,mblogit)
 S3method(predict,mblogit)
 S3method(weights,mblogit)
 
+S3method(print,mmclogit)
+S3method(summary,mmclogit)
+S3method(print,summary.mmclogit)
 
+S3method(print,mmblogit)
+S3method(summary,mmblogit)
+S3method(print,summary.mmblogit)
