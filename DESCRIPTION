@@ -1,13 +1,13 @@
 Package: mclogit
 Type: Package
 Title: Mixed Conditional Logit Models
-Version: 0.5.1
-Date: 2017-07-16
+Version: 0.6
+Date: 2018-04-25
 Author: Martin Elff
 Maintainer: Martin Elff <mclogit@elff.eu>
 Description: Specification and estimation of conditional logit models of binary
-    responses and multinomial counts is provided, with or without alternative-
-    specific random effects. The current implementation of the estimator for random
+    responses and multinomial counts is provided, with or without
+    random effects. The current implementation of the estimator for random
     effects variances uses a Laplace approximation (or PQL) approach and thus should
     be used only if groups sizes are large.
 License: GPL-2
@@ -19,6 +19,6 @@ URL:
 BugReports: http://github.com/melff/mclogit/issues
 RoxygenNote: 5.0.1
 NeedsCompilation: no
-Packaged: 2017-07-15 23:56:48 UTC; elff
+Packaged: 2018-05-10 09:48:14 UTC; elff
 Repository: CRAN
-Date/Publication: 2017-07-17 09:46:59 UTC
+Date/Publication: 2018-05-10 12:16:38 UTC
