@@ -1,4 +1,4 @@
-bc526bce97fcc5ab31252ecf1274de1c *DESCRIPTION
+fae68d8a3c92b17b2462ec5bab4199f6 *DESCRIPTION
 8e2f6305165fc3d69a294d09227ba690 *NAMESPACE
 5f46b25a049e81e86774e78cd294ff89 *R/AIC-mclogit.R
 fda85116896df5934a2ce2b9e3118dee *R/anova-mclogit.R
@@ -6,13 +6,13 @@ fda85116896df5934a2ce2b9e3118dee *R/anova-mclogit.R
 174a746177e5e0ffa74047959c4b59ba *R/getSummary-mclogit.R
 8443552bb939bf83bafc6255125dd6a9 *R/mblogit.R
 e59d1445b41da59347a1d181b9e44025 *R/mclogit-fit.R
-4391129b68ab0c0b4b4f6c6920d82f9a *R/mclogit.R
+603980cedf43896f5747f90b613b6905 *R/mclogit.R
 202e8dd6dd5ee19a281df6277484e46c *R/zzz.R
-f07c5b8a1b9a311ce9f14c89a3501be5 *data/Transport.rda
-170a2686691e2ec1bc0d197ec11a8397 *data/electors.rda
+4a0280d8a6f4bb996c56bfa893b42a05 *data/Transport.rda
+a744f9521c5061a78d8a098e638ab46d *data/electors.rda
 de4c63b49c62998527d72c185ceab0d3 *demo/00Index
 6ba2e10f92f3743f465cda6cc059f5a1 *demo/mclogit.test.R
-285f7ffde7690a50a68c9e2d79922631 *inst/ChangeLog
+ca56eafeea6b3baf69fc35ce0f1cd8b9 *inst/ChangeLog
 3108d598ac3ef8fec366d0563fc95d72 *inst/NEWS.Rd
 c05ff442f7a2312ff8f3d6b5aa96ddeb *man/Transport.Rd
 6384c0365cb1b46ea7230227dd9c8392 *man/electors.Rd
