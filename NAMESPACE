@@ -1,14 +1,17 @@
 import(stats,Matrix)
-importFrom(memisc,getSummary,"%nin%")
+importFrom(memisc,getSummary,"%nin%",Sapply)
 importFrom(methods,as)
 export(
       mclogit,
       mclogit.fit,
-      mmclogit.fitPQL,
+      mmclogit.fitPQLMQL,
       mclogit.control,
+      mmclogit.control,
       getSummary.mclogit,
+      getSummary.mmclogit,
       mblogit,
-      getSummary.mblogit
+      getSummary.mblogit,
+      getSummary.mmblogit
 )
 S3method(print,mclogit)
 S3method(vcov,mclogit)
@@ -25,6 +28,11 @@ S3method(BIC,mclogit)
 S3method(nobs,mclogit)
 S3method(extractAIC,mclogit)
 S3method(anova,mclogit)
+S3method(update,mclogit)
+
+S3method(print,mmclogit)
+S3method(summary,mmclogit)
+S3method(print,summary.mmclogit)
 
 S3method(print,mblogit)
 S3method(summary,mblogit)
@@ -33,10 +41,22 @@ S3method(fitted,mblogit)
 S3method(predict,mblogit)
 S3method(weights,mblogit)
 
-S3method(print,mmclogit)
-S3method(summary,mmclogit)
-S3method(print,summary.mmclogit)
-
 S3method(print,mmblogit)
 S3method(summary,mmblogit)
 S3method(print,summary.mmblogit)
+
+
+export(dispersion)
+S3method(dispersion,mclogit)
+
+S3method(getSummary,mclogit)
+S3method(getSummary,mblogit)
+
+S3method(getSummary,mmclogit)
+S3method(getSummary,mmblogit)
+
+S3method(simulate,mclogit)
+S3method(simulate,mblogit)
+
+S3method(simulate,mmclogit)
+S3method(simulate,mmblogit)

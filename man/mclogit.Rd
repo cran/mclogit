@@ -11,9 +11,14 @@
 \alias{fitted.mclogit}
 \alias{predict.mclogit}
 \alias{residuals.mclogit}
+\alias{weights.mclogit}
 \alias{AIC.mclogit}
 \alias{BIC.mclogit}
+\alias{update.mclogit}
 \alias{anova.mclogit}
+\alias{summary.mmclogit}
+\alias{print.summary.mmclogit}
+
 
 \title{Conditional Logit Models and Mixed Conditional Logit Models}
 \description{
@@ -31,8 +36,17 @@
 mclogit(formula, data=parent.frame(), random=NULL,
         subset, weights = NULL, offset=NULL, na.action = getOption("na.action"),
         model = TRUE, x = FALSE, y = TRUE, contrasts=NULL,
+        method = NULL, estimator=c("ML","REML"),
+        dispersion = FALSE,
         start=NULL,
-        control=mclogit.control(\dots), \dots)
+        control=if(length(random))
+                    mmclogit.control(\dots)
+                else mclogit.control(\dots), \dots)
+
+\method{update}{mclogit}(object, formula., dispersion, \dots)
+
+\method{summary}{mclogit}(object, dispersion = NULL, correlation = FALSE,
+        symbolic.cor = FALSE,  \dots)    
 }
 \arguments{
   \item{formula}{a model formula: a symbolic description of the
@@ -92,18 +106,42 @@ mclogit(formula, data=parent.frame(), random=NULL,
   \item{contrasts}{an optional list. See the \code{contrasts.arg}
     of \code{model.matrix.default}.}
 
+  \item{method}{\code{NULL} or a character string, either "PQL" or "MQL", specifies
+      the type of the quasilikelihood approximation to be used if
+      a random-effects model is to be estimated.}
+
+  \item{estimator}{a character string; either "ML" or "REML",
+    specifies which estimator is to be used/approximated.}
+    
+  \item{dispersion}{a real number used as dispersion parameter;
+    a character vector that specifies the method to compute the dispersion;
+    a logical value -- if \code{TRUE} the default method
+    (\code{"Afroz"}) is used, if \code{FALSE}, the dispersion parameter
+    is set to 1, that is, no dispersion. For details see \code{\link{dispersion}}.}
+  
   \item{control}{a list of parameters for the fitting process.
     See \code{\link{mclogit.control}} }
 
   \item{\dots}{
-    arguments to be passed to \code{mclogit.control}
+    arguments to be passed to \code{mclogit.control} or \code{mmclogit.control}
     }
 
+  \item{object}{an object that inherits class \code{"mclogit"}.
+    When passed to \code{dispersion()}, it 
+    should be the result of a call of \code{mclogit()} of
+    \code{mblogit()}, \emph{without} random effects.
+  }
+  \item{formula.}{a changes to the model formula,
+    see \code{\link[stats:update]{update.default}} and
+    \code{\link[stats]{update.formula}}.}
+  \item{correlation}{logical; see \code{\link[stats]{summary.lm}}.}
+  \item{symbolic.cor}{logical; see \code{\link[stats]{summary.lm}}.}
 }
 \value{
   \code{mclogit} returns an object of class "mclogit", which has almost the
   same structure as an object of class "\link[stats]{glm}".
 }
+
 
 \note{
   Covariates that are constant within choice sets are automatically
@@ -126,6 +164,29 @@ mclogit(formula, data=parent.frame(), random=NULL,
   explicitely.
 }
 
+\references{
+    Agresti, Alan (2002).
+    \emph{Categorical Data Analysis.} 2nd ed, Hoboken, NJ: Wiley.
+    \url{https://doi.org/10.1002/0471249688}
+
+    Breslow, N.E. and D.G. Clayton (1993).
+    "Approximate Inference in Generalized Linear Mixed Models".
+    \emph{Journal of the American Statistical Association} 88 (421): 9-25.
+    \url{https://doi.org/10.1080/01621459.1993.10594284}
+    
+    Elff, Martin (2009).
+    "Social Divisions, Party Positions, and Electoral Behaviour".
+    \emph{Electoral Studies} 28(2): 297-308.
+    \url{https://doi.org/10.1016/j.electstud.2009.02.002}
+    
+    McFadden, D. (1973).
+    "Conditionial Logit Analysis of Qualitative Choice Behavior".
+    Pp. 105-135 in P. Zarembka (ed.).
+    \emph{Frontiers in Econometrics}.
+    New York: Wiley.
+    \url{https://eml.berkeley.edu/reprints/mcfadden/zarembka.pdf}
+}
+
 \examples{
 data(Transport)
 
@@ -143,3 +204,15 @@ summary(mclogit(
 }
 \keyword{models}
 \keyword{regression}
+
+\seealso{
+Conditional logit models are also supported by \pkg{gmnl}, \pkg{mlogit}, and \pkg{survival}.
+\pkg{survival} supports conditional logit models for binary panel data and case-control studies.     
+\pkg{mlogit} and \pkg{gmnl} treat conditional logit models from an econometric perspective.
+Unlike the present package, they focus on the random utility interpretation of discrete choice models
+and support generalisations of conditional logit models, such as nested logit models, that are intended
+to overcome the IIA (indipendence from irrelevant alterantives) assumption. Mixed multinomial models are
+also supported and estimated using simulation-based techniques. Unlike the present package,
+mixed or random-effects extensions are mainly intended to fit repeated choices of the same individuals and not
+aggregated choices of many individuals facing identical alternatives.
+}

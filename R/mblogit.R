@@ -1,8 +1,7 @@
-#' Multinomial (Baseline) Logit Models for Categorical and Multinommial Responses
+#' Baseline-Category Logit Models for Categorical and Multinomial Responses
 #'
-#' The function \code{mblogit} fits multinomial logit models for categorical
-#' and multinomial count responses with fixed alternatives, where the logits are
-#' relative to a baseline category. 
+#' The function \code{mblogit} fits baseline-category logit models for categorical
+#' and multinomial count responses with fixed alternatives. 
 #'
 #' @param formula the model formula. The response must be a factor or a matrix
 #' of counts.
@@ -30,9 +29,24 @@
 #' of the returned value.
 #' @param contrasts an optional list. See the \code{contrasts.arg}
 #' of \code{model.matrix.default}.
+#' @param method \code{NULL} or a character string, either "PQL" or "MQL", specifies
+#' the type of the quasilikelihood approximation to be used if
+#' a random-effects model is to be estimated.
+#' @param estimator a character string; either "ML" or "REML",
+#' specifies which estimator is to be used/approximated.
+#' @param dispersion a logical value or a character string; whether and how
+#' a dispersion parameter should be estimated. For details see \code{\link{dispersion}}.
+#' @param from.table a logical value; do the data represent a contingency table, e.g. were created
+#' by applying \code{as.data.frame()} a the result of \code{table()} or \code{xtabs()}.
+#' This relevant only if the response is a factor. This argument should be set to \code{TRUE}
+#' if the data do come from a contingency table. Correctly setting \code{from.table=TRUE} in this case,
+#' will lead to efficiency gains in computing, but more importantly overdispersion will correctly
+#' be computed if present.
+#' @param groups an optional formula that specifies groups of observations relevant for
+#' the specification of overdispersed response counts.
 #' @param control a list of parameters for the fitting process.
 #' See \code{\link{mclogit.control}}
-#' @param \dots arguments to be passed to \code{mclogit.control}
+#' @param \dots arguments to be passed to \code{mclogit.control} or  \code{mmclogit.control}
 #'
 #' @return   \code{mblogit} returns an object of class "mblogit", which has almost the
 #' same structure as an object of class "\link[stats]{glm}". The difference are
@@ -43,8 +57,29 @@
 #' @details The function \code{mblogit} internally rearranges the data
 #' into a 'long' format and uses \code{\link{mclogit.fit}} to compute
 #' estimates. Nevertheless, the 'user data' is unaffected.
+#'
+#' @seealso The function \code{\link[nnet]{multinom}} in package \pkg{nnet} also fits multinomial
+#' baseline-category logit models, but has a slightly less convenient output and does not support
+#' overdispersion or random effects. However, it provides some other options. Baseline-category logit models are
+#' also supported by the package \pkg{VGAM}, as well as some reduced-rank and (semi-parametric) additive generalisations.
+#' The package \pkg{mnlogit} estimates logit models in a way optimized for large numbers of alternatives.
 #' 
-#' @aliases predict.mblogit print.mblogit summary.mblogit print.summary.mblogit fitted.mblogit print.mmblogit summary.mmblogit print.summary.mmblogit
+#' @example examples/mblogit-ex.R
+#' 
+#' @references
+#'    Agresti, Alan (2002).
+#'    \emph{Categorical Data Analysis.} 2nd ed, Hoboken, NJ: Wiley.
+#'    \url{https://doi.org/10.1002/0471249688}
+#'
+#'    Breslow, N.E. and D.G. Clayton (1993).
+#'    "Approximate Inference in Generalized Linear Mixed Models".
+#'    \emph{Journal of the American Statistical Association} 88 (421): 9-25.
+#'    \url{https://doi.org/10.1080/01621459.1993.10594284}
+#'
+#' 
+#' @aliases predict.mblogit print.mblogit summary.mblogit print.summary.mblogit fitted.mblogit
+#' predict.mblogit, weights.mblogit
+#' print.mmblogit summary.mmblogit print.summary.mmblogit
 mblogit <- function(formula,
                     data=parent.frame(),
                     random=NULL,
@@ -53,13 +88,25 @@ mblogit <- function(formula,
                     na.action = getOption("na.action"),
                     model = TRUE, x = FALSE, y = TRUE,
                     contrasts=NULL,
-                    control=mclogit.control(...),
+                    method = NULL,
+                    estimator=c("ML","REML"),
+                    dispersion = FALSE,
+                    from.table = FALSE,
+                    groups = NULL,
+                    control=if(length(random))
+                                mmclogit.control(...)
+                            else mclogit.control(...),
                     ...){
     
     call <- match.call(expand.dots = TRUE)
     
     if(missing(data)) data <- environment(formula)
-    
+    else if(is.table(data)){
+        from.table <- TRUE
+        data <- as.data.frame(data)
+    }
+    else 
+        data <- as.data.frame(data)
     mf <- match.call(expand.dots = FALSE)
     m <- match(c("formula", "data", "subset", "weights", "offset", "na.action"), names(mf), 0)
     mf <- mf[c(1, m)]
@@ -72,17 +119,24 @@ mblogit <- function(formula,
         mff <- structure(mf$formula,class="formula")
         mf$formula <- update(mff,rf)
     }
+    else if(length(groups)){
+        gf <- paste(c(".~.",all.vars(groups)),collapse="+")
+        gf <- as.formula(rf)
+        mff <- structure(mf$formula,class="formula")
+        mf$formula <- update(mff,gf)
+    }
     
     mf <- eval(mf, parent.frame())
     mt <- terms(formula)
-
+    attr(mf,"terms") <- mt
+    
     na.action <- attr(mf,"na.action")
     weights <- as.vector(model.weights(mf))
     offset <- as.vector(model.offset(mf))
     if(!is.null(weights) && !is.numeric(weights))
         stop("'weights' must be a numeric vector")
     
-    y <- model.response(mf, "any")
+    Y <- model.response(mf, "any")
     X <- model.matrix(mt,mf,contrasts)
     contrasts <- attr(X, "contrasts")
     xlevels <- .getXlevels(mt,mf)
@@ -91,33 +145,75 @@ mblogit <- function(formula,
         weights <- rep(1,nrow(X))
     N <- sum(weights)
     prior.weights <- weights
-    
-    if(is.factor(y)){
 
-        D <- diag(nlevels(y))[,-1]
-        dimnames(D) <- list(levels(y),levels(y)[-1])
-        I <- diag(nlevels(y))
-        dimnames(I) <- list(levels(y),levels(y))
-        yy <- c(I[,y])
+    if(is.factor(Y)){
+        response.type <- "factor"
+        if(from.table){
+            # Create an appropriate response matrix if data
+            # come from a table of frequencies
+            tmf <- terms(mf)
+            respix <- attr(tmf,"response")
+            vars <- as.character(attr(tmf,"variables")[-1])
+            respname <- vars[respix]
+            respix <- match(respname,names(mf))
         
-        weights <- rep(weights,each=nlevels(y))
-    } else if(is.matrix(y)){
-        
-        D <- diag(ncol(y))[,-1]
-        if(length(colnames(y))){
-            rownames(D) <- colnames(y)
-            colnames(D) <- colnames(y)[-1]
+            wghix <- match("(weights)",names(mf))
+            mf1 <- mf[-c(respix,wghix)]
+
+            umf1 <- !duplicated(mf1)
+            i <- cumsum(umf1)
+            j <- as.integer(Y)
+            attr(mf,"ij") <- cbind(i,j)
+            attr(mf,"j==1") <- umf1
+            
+            levs <- levels(Y)
+            m <- nlevels(Y)
+            n <- i[length(i)]
+
+            Y <- matrix(0,nrow=n,ncol=m)
+            Y[cbind(i,j)] <- prior.weights
+            w <- rowSums(Y)
+            Y <- Y/w
+            Y <- as.vector(t(Y))
+            weights <- rep(w,each=m)
+            D <- diag(m)[,-1, drop=FALSE]
+            dimnames(D) <- list(levs,levs[-1])
+            X <- X[umf1,,drop=FALSE]
         }
         else {
-            rownames(D) <- 1:ncol(y)
-            colnames(D) <- 2:ncol(y)
+            weights <- rep(weights,each=nlevels(Y))
+            D <- diag(nlevels(Y))[,-1, drop=FALSE]
+            dimnames(D) <- list(levels(Y),levels(Y)[-1])
+            I <- diag(nlevels(Y))
+            dimnames(I) <- list(levels(Y),levels(Y))
+            Y <- as.vector(I[,Y])
+        }
+    } else if(is.matrix(Y)){
+        response.type <- "matrix"
+        
+        D <- diag(ncol(Y))[,-1, drop=FALSE]
+        if(length(colnames(Y))){
+            rownames(D) <- colnames(Y)
+            colnames(D) <- colnames(Y)[-1]
+        }
+        else {
+            rownames(D) <- 1:ncol(Y)
+            colnames(D) <- 2:ncol(Y)
         }
         
-        w <- rowSums(y)
-        yy <- c(t(y/w))
-        weights <- rep(w*weights,each=ncol(y))
+        w <- rowSums(Y)
+        Y <- Y/w
+        if(any(w==0)){
+            Y[w==0,] <- 0
+            N <- sum(weights[w>0])
+            warning(sprintf("ignoring %d observerations with counts that sum to zero",
+                            sum(w==0)),
+                    call. = FALSE, immediate. = TRUE)
+        }
+        weights <- rep(w*weights,each=ncol(Y))
+        Y <- as.vector(t(Y))
     }
-    else stop("response must either be a factor or a matrix of counts")
+    else stop("response must either be a factor or a matrix of counts or dummies")
     
     s <- rep(seq_len(nrow(X)),each=nrow(D))
     
@@ -126,26 +222,27 @@ mblogit <- function(formula,
     colnames(XD) <- paste0(rep(colnames(D),ncol(X)),
                                   "~",
                                   rep(colnames(X),each=ncol(D)))
-    
-    fit <- mclogit.fit(y=yy,s=s,w=weights,X=XD,
-                       control=control)
 
-    if(length(random)){ ## random effects
+    if(!length(random))
+        fit <- mclogit.fit(y=Y,s=s,w=weights,X=XD,
+                           dispersion=dispersion,
+                           control=control)
+    else { ## random effects
 
-        null.dev <- fit$null.deviance
+        if(!length(method)) method <- "PQL"
         
         random <- setupRandomFormula(random)
         rt <- terms(random$formula)
-        
+
         groups <- random$groups
-        rX <- model.matrix(rt,mf,contrasts)
+        Z <- model.matrix(rt,mf,contrasts)
 
-        rXD <- rX%x%D
+        ZD <- Z%x%D
 
-        colnames(rXD) <- paste0(rep(colnames(D),ncol(rX)),
+        colnames(ZD) <- paste0(rep(colnames(D),ncol(Z)),
                                "~",
-                               rep(colnames(rX),each=ncol(D)))
-        colnames(rXD) <- gsub("(Intercept)","1",colnames(rXD),fixed=TRUE)
+                               rep(colnames(Z),each=ncol(D)))
+        colnames(ZD) <- gsub("(Intercept)","1",colnames(ZD),fixed=TRUE)
         
         groups <- mf[groups]
         groups <- lapply(groups,rep,each=nrow(D))
@@ -158,19 +255,12 @@ mblogit <- function(formula,
                 groups[[i]] <- quickInteraction(groups[c(i-1,i)])
         }
 
-        Z <- lapply(groups,mkZ,rX=rXD)
-        G <- mkG(rXD)
-        G <- rep(list(G),length(groups))
-        names(Z) <- names(groups)
-        names(G) <- names(groups)
-        
-        fit <- mmclogit.fitPQL(y=yy,s=s,w=weights,
-                               X=XD,Z=Z,G=G,groups=groups,
-                               start=fit$coef,
-                               control=control,
-                               offset = offset)
-        
-        fit$null.deviance <- null.dev
+        fit <- mmclogit.fitPQLMQL(y=Y,s=s,w=weights,
+                                  X=XD,Z=ZD,groups=groups,
+                                  method=method,
+                                  estimator=estimator,
+                                  control=control,
+                                  offset = offset)
     }
     
     coefficients <- fit$coefficients
@@ -183,6 +273,12 @@ mblogit <- function(formula,
     fit$coefmat <- coefmat
     fit$coefficients <- coefficients
     
+    if(x) fit$x <- X
+    if(x && length(random)) fit$z <- Z
+    if(!y) {
+        fit$y <- NULL
+        fit$s <- NULL
+    }
     fit <- c(fit,list(call = call, formula = formula,
                       terms = mt,
                       random = NULL,
@@ -194,9 +290,12 @@ mblogit <- function(formula,
                       weights=weights,
                       model=mf,
                       D=D,
-                      N=N))
+                      N=N,
+                      response.type=response.type,
+                      from.table=from.table))
+
     if(length(random))
-        class(fit) <- c("mmblogit","mmclogit","mclogit","lm")
+        class(fit) <- c("mmblogit","mblogit","mmclogit","mclogit","lm")
     else
         class(fit) <- c("mblogit","mclogit","lm")
     fit
@@ -227,9 +326,12 @@ print.mblogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
     print.default(format(coefmat, digits=digits),
                   print.gap = 2, quote = FALSE)
   } else cat("No coefficients\n\n")
+  if(x$phi != 1)
+      cat("\nDispersion: ",x$phi)
   
   cat("\nNull Deviance:    ",   format(signif(x$null.deviance, digits)),
       "\nResidual Deviance:", format(signif(x$deviance, digits)))
+  if(!x$converged) cat("\n\nNote: Algorithm did not converge.\n")
   if(nchar(mess <- naprint(x$na.action))) cat("  (",mess, ")\n", sep="")
   else cat("\n")
   invisible(x)
@@ -271,7 +373,8 @@ print.summary.mblogit <-
                    signif.legend=signif.stars && i==ncategs,
                    na.print="NA", ...)
     }
-    
+    if(x$dispersion != 1)
+        cat("\nDispersion: ",x$dispersion," on ",x$df.residual," degrees of freedom")
 
     cat("\nNull Deviance:    ",   format(signif(x$null.deviance, digits)),
         "\nResidual Deviance:", format(signif(x$deviance, digits)),
@@ -293,6 +396,7 @@ print.summary.mblogit <-
       }
     }
     
+    if(!x$converged) cat("\n\nNote: Algorithm did not converge.\n")
     if(nchar(mess <- naprint(x$na.action))) cat("  (",mess, ")\n", sep="")
     else cat("\n")
     invisible(x)
@@ -310,12 +414,11 @@ fitted.mblogit <- function(object,type=c("probabilities","counts"),...){
   longfit <- switch(type,
                 probabilities=res,
                 counts=weights*res)
-  
-  if(!is.null(na.act))
-    longfit <- napredict(na.act,longfit)
-  
   ncat <- nrow(object$D)
   fit <- t(matrix(longfit,nrow=ncat))
+  
+  if(!is.null(na.act))
+    fit <- napredict(na.act,fit)
   fit
 }
 
@@ -350,8 +453,6 @@ predict.mblogit <- function(object, newdata=NULL,type=c("link","response"),se.fi
     V <- vcov(object)
     stopifnot(ncol(XD)==ncol(V))
   }
-  
-  
   
   if(type=="response") {
     exp.eta <- exp(eta)
@@ -486,21 +587,23 @@ print.summary.mmblogit <-
  
     cat("\n(Co-)Variances:\n")
     VarCov <- x$VarCov
+    se_VarCov <- x$se_VarCov
     for(k in 1:length(VarCov)){
-        cat("\nGrouping level:",names(VarCov)[k],"\n")
+        cat("Grouping level:",names(VarCov)[k],"\n")
         VarCov.k <- VarCov[[k]]
+        VarCov.k[] <- format(VarCov.k, digits=digits)
+        VarCov.k[upper.tri(VarCov.k)] <- ""
+        #print.default(VarCov.k, print.gap = 2, quote = FALSE)
+        VarCov.k <- format_Mat(VarCov.k,title="Estimate")
 
-        utri <- rep(upper.tri(VarCov.k[,,1]),2)
-        VarCov.k[utri] <- NA
-        VarCov.k <- ftable(VarCov.k,col.vars=3:2)
-        VarCov.k <- format(VarCov.k, digits=digits, quote=FALSE)[-3,-2]
-        VarCov.k[-(1:2),-1] <- gsub("NA","  ",VarCov.k[-(1:2),-1],fixed=TRUE)
-        
-        VarCov.k[1,] <- format(trimws(VarCov.k[1,]),justify="left")
-        VarCov.k <- format(VarCov.k)
-        cat(paste(apply(VarCov.k,1,paste,collapse=" "),collapse="\n"),"\n")
+        se_VarCov.k <- se_VarCov[[k]]
+        se_VarCov.k[] <- format(se_VarCov.k, digits=digits)
+        se_VarCov.k[upper.tri(se_VarCov.k)] <- ""
+        se_VarCov.k <- format_Mat(se_VarCov.k,title="Std.Err.",rownames=" ")
+
+        VarCov.k <- paste(VarCov.k,se_VarCov.k)
+        writeLines(VarCov.k)
     }
-   
 
     cat("\nNull Deviance:    ",   format(signif(x$null.deviance, digits)),
         "\nResidual Deviance:", format(signif(x$deviance, digits)),
@@ -527,3 +630,75 @@ print.summary.mmblogit <-
     else cat("\n")
     invisible(x)
   }
+
+simulate.mblogit <- function(object, nsim = 1, seed = NULL, ...){
+
+    if(object$phi > 1)
+        stop("Simulating responses from models with oversdispersion is not supported yet")
+
+    if(object$response.type=="matrix" || object$from.table){
+        yy <- NextMethod()
+        seed_attr <- attr(yy,"seed")
+        nm <- nrow(yy)
+        m <- nrow(object$D)
+        n <- nm %/% m
+        yy <- lapply(yy,array,
+                     dim=c(m,n),
+                     dimnames=list(rownames(object$D),
+                                   NULL))
+        yy <- lapply(yy,t)
+        names(yy) <- paste0("sim_",1:nsim)
+        
+        if(object$response.type=="matrix"){
+            class(yy) <- "data.frame"
+            attr(yy,"row.names") <- rownames(object$model)
+            attr(yy,"seed") <- seed_attr
+            return(yy)
+        }
+        else {
+            ij <- attr(object$model,"ij")
+            n <- nrow(ij)
+            yy <- lapply(yy,"[",ij)
+            yy <- as.data.frame(yy)
+            attr(yy,"seed") <- seed_attr
+            return(yy)
+        }
+    }
+    else { # response.type == "factor"
+        probs <- object$fitted.values
+        response <- model.response(object$model)
+        nm <- length(probs)
+        m <- nrow(object$D)
+        n <- nm %/% m
+        dim(probs) <- c(m,n)
+        yy <- sample_factor(probs,nsim=nsim,seed=seed)
+        seed_attr <- attr(yy,"seed")
+        colnames(yy) <- paste0("sim_",1:nsim)
+        rownames(yy) <- rownames(object$model)
+        yy <- as.data.frame(yy)
+        yy <- lapply(yy,factor,labels=levels(response))
+        yy <- as.data.frame(yy)
+        attr(yy,"seed") <- seed_attr
+        return(yy)
+    }
+}
+
+simulate.mmblogit <- function(object, nsim = 1, seed = NULL, ...)
+    stop("Simulating responses from random-effects models is not supported yet")
+
+sample_factor <- function(probs, nsim =1, seed = NULL, ...){
+    if (!exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) 
+        runif(1)
+    if (is.null(seed)) 
+        RNGstate <- get(".Random.seed", envir = .GlobalEnv)
+    else {
+        R.seed <- get(".Random.seed", envir = .GlobalEnv)
+        set.seed(seed)
+        RNGstate <- structure(seed, kind = as.list(RNGkind()))
+        on.exit(assign(".Random.seed", R.seed, envir = .GlobalEnv))
+    }
+    yy <- apply(probs,2,sample.int,size=nsim,n=nrow(probs),replace=TRUE)
+    yy <- t(yy)
+    attr(yy,"seed") <- RNGstate
+    return(yy)
+}

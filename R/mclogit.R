@@ -53,8 +53,13 @@ mclogit <- function(
                 na.action = getOption("na.action"),
                 model = TRUE, x = FALSE, y = TRUE,
                 contrasts=NULL,
+                method = NULL,
+                estimator=c("ML","REML"),
+                dispersion = FALSE,
                 start=NULL,
-                control=mclogit.control(...),
+                control=if(length(random))
+                            mmclogit.control(...)
+                        else mclogit.control(...),
                 ...
             ){
 # Assumptions:
@@ -129,26 +134,21 @@ mclogit <- function(
     if(ncol(X)<1)
         stop("No predictor variable remains in model")
     
-    if(length(random) && control$trace)
-        cat("Fitting plain conditional logit to obtain starting values")
-    
-    fit <- mclogit.fit(Y,sets,weights,X,
+    if(!length(random))
+    fit <- mclogit.fit(y=Y,s=sets,w=weights,X=X,
+                       dispersion=dispersion,
                        control=control,
                        start = start,
                        offset = offset)
-
-    if(length(random)){ ## random effects
-
-        if(control$trace)
-            cat("Fitting random effects/random coefficients model")
+    else { ## random effects
         
-        null.dev <- fit$null.deviance
-    
+        if(!length(method)) method <- "PQL"
+
         random <- setupRandomFormula(random)
         rt <- terms(random$formula)
         
         groups <- random$groups
-        rX <- model.matrix(rt,mf,contrasts)
+        Z <- model.matrix(rt,mf,contrasts)
         groups <- mf[groups]
         
         nlev <- length(groups)
@@ -161,40 +161,30 @@ mclogit <- function(
 
         gconst <- listConstInSets(groups,sets)
         if(any(gconst)){
-            rconst <- matConstInSets(rX,sets)
+            rconst <- matConstInSets(Z,sets)
             if(any(rconst)){
                 cat("\n")
                 warning("removing ",
-                        gsub("(Intercept)","intercept",paste(colnames(rX)[rconst],collapse=","),fixed=TRUE),
+                        gsub("(Intercept)","intercept",paste(colnames(Z)[rconst],collapse=","),fixed=TRUE),
                         " from random part of the model\n because of insufficient within-choice set variance")
-                rX <- rX[,!rconst,drop=FALSE]
+                Z <- Z[,!rconst,drop=FALSE]
             }
-            if(ncol(rX)<1)
+            if(ncol(Z)<1)
                 stop("No predictor variable remains in random part of the model.\nPlease reconsider your model specification.")
         }
         
-        
-        Z <- lapply(groups,mkZ,rX=rX)
-        G <- mkG(rX)
-        G <- rep(list(G),length(groups))
-        names(Z) <- names(groups)
-        names(G) <- names(groups)
-        
-        fit <- mmclogit.fitPQL(Y,sets,weights,
-                               X,Z,G,groups,
-                               start=fit$coef,
-                               control=control,
-                               offset = offset)
-
-        fit$null.deviance <- null.dev
-        
+        fit <- mmclogit.fitPQLMQL(Y,sets,weights,X,Z,groups,
+                                  method = method,
+                                  estimator=estimator,
+                                  control=control,
+                                  offset = offset)
     }
     
     if(x) fit$x <- X
     if(x && length(random)) fit$z <- Z
     if(!y) {
         fit$y <- NULL
-        ftt$s <- NULL
+        fit$s <- NULL
     }
     fit <- c(fit,list(call = call, formula = formula,
                       terms = mt,
@@ -265,6 +255,8 @@ print.mclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
         print.default(format(x$coefficients, digits=digits),
                       print.gap = 2, quote = FALSE)
     } else cat("No coefficients\n\n")
+    if(x$phi != 1)
+        cat("\nDispersion: ",x$phi)
     cat("\nNull Deviance:    ",   format(signif(x$null.deviance, digits)),
         "\nResidual Deviance:", format(signif(x$deviance, digits)))
     if(!x$converged) cat("\nNote: Algorithm did not converge.\n")
@@ -274,7 +266,7 @@ print.mclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
 }
 
 vcov.mclogit <- function(object,...){
-    return(object$covmat)
+    return(object$covmat * object$phi)
 }
 
 weights.mclogit <- function(object,...){
@@ -290,15 +282,27 @@ summary.mclogit <- function(object,dispersion=NULL,correlation = FALSE, symbolic
     ## calculate coef table
 
     coef <- object$coefficients
-    covmat.scaled <- object$covmat 
+
+    if(is.null(dispersion))
+        dispersion <- object$phi
+    
+    covmat.scaled <- object$covmat * dispersion
+    
     var.cf <- diag(covmat.scaled)
     s.err <- sqrt(var.cf)
     zvalue <- coef/s.err
-    pvalue <- 2*pnorm(-abs(zvalue))
+
+    if(dispersion == 1)
+        pvalue <- 2*pnorm(-abs(zvalue))
+    else
+        pvalue <- 2*pt(-abs(zvalue),df=object$df.residual)
 
     coef.table <- array(NA,dim=c(length(coef),4))
-    dimnames(coef.table) <- list(names(coef),
-            c("Estimate", "Std. Error","z value","Pr(>|z|)"))
+    rownames(coef.table) <- names(coef)
+    if(dispersion == 1)
+        colnames(coef.table) <- c("Estimate", "Std. Error","z value","Pr(>|z|)")
+    else
+        colnames(coef.table) <- c("Estimate", "Std. Error","t value","Pr(>|t|)")
     coef.table[,1] <- coef
     coef.table[,2] <- s.err
     coef.table[,3] <- zvalue
@@ -306,9 +310,11 @@ summary.mclogit <- function(object,dispersion=NULL,correlation = FALSE, symbolic
 
     ans <- c(object[c("call","terms","deviance","contrasts",
                       "null.deviance","iter","na.action","model.df",
-                      "residual.df","N","converged")],
+                      "df.residual","N","converged")],
               list(coefficients = coef.table,
-                    cov.coef=object$covmat))
+                   cov.coef=covmat.scaled,
+                   dispersion = dispersion
+                   ))
     p <- length(coef)
     if(correlation && p > 0) {
         dd <- sqrt(diag(ans$cov.coef))
@@ -330,12 +336,15 @@ print.summary.mclogit <-
     coefs <- x$coefficients
     printCoefmat(coefs, digits=digits, signif.stars=signif.stars,
                      na.print="NA", ...)
+    if(x$dispersion != 1)
+        cat("\nDispersion: ",x$dispersion," on ",x$df.residual," degrees of freedom")
 
     cat("\nNull Deviance:    ",   format(signif(x$null.deviance, digits)),
         "\nResidual Deviance:", format(signif(x$deviance, digits)),
         "\nNumber of Fisher Scoring iterations: ", x$iter,
         "\nNumber of observations: ",x$N,
         "\n")
+    
     correl <- x$correlation
     if(!is.null(correl)) {
         p <- NCOL(correl)
@@ -493,7 +502,7 @@ nobs.mclogit <- function(object,...) object$N
 extractAIC.mclogit <- function(fit, scale = 0, k = 2, ...) 
 {
   N <- fit$N
-  edf <- N - fit$residual.df
+  edf <- N - fit$df.residual
   aic <- AIC(fit)
   c(edf, aic + (k - 2) * edf)
 }
@@ -543,8 +552,9 @@ summary.mmclogit <- function(object,dispersion=NULL,correlation = FALSE, symboli
     ## calculate coef table
 
     coef <- object$coefficients
-    covmat.scaled <- object$covmat 
-    var.cf <- diag(covmat.scaled)
+    info.coef <- object$info.coef
+    vcov.cf <- solve(info.coef)
+    var.cf <- diag(vcov.cf)
     s.err <- sqrt(var.cf)
     zvalue <- coef/s.err
     pvalue <- 2*pnorm(-abs(zvalue))
@@ -557,32 +567,17 @@ summary.mmclogit <- function(object,dispersion=NULL,correlation = FALSE, symboli
     coef.table[,3] <- zvalue
     coef.table[,4] <- pvalue
 
-    G <- object$G
-    nlevs <- length(G)
-    nvpar <- sapply(G,length)
-    vpar.selector <- rep(1:nlevs,nvpar)
-    
-    se.varPar <- sqrt(diag(object$covmat.varPar))
-    se.varPar <- split(se.varPar,vpar.selector)
-    VarCov.table <- list()
-    for(k in 1:nlevs){
-        VarCov.k <- object$VarCov[[k]]
-        se.VarCov.k <- as.matrix(fillG(G[[k]],se.varPar[[k]]))
-        VarCov.table.k <- array(NA,dim=c(dim(VarCov.k),2))
-        VarCov.table.k[,,1] <- VarCov.k
-        VarCov.table.k[,,2] <- se.VarCov.k
-        dimnames(VarCov.table.k)[1:2] <- dimnames(VarCov.k)
-        dimnames(VarCov.table.k)[[3]] <- c("Estimate", "Std. Error")
-        VarCov.table[[k]] <- VarCov.table.k
-    }
-    names(VarCov.table) <- names(object$VarCov)
+    VarCov <- object$VarCov
+    info.lambda <- object$info.lambda
+    se_VarCov <- se_Phi(VarCov,info.lambda)
     
     ans <- c(object[c("call","terms","deviance","contrasts",
                       "null.deviance","iter","na.action","model.df",
-                      "residual.df","N","converged")],
+                      "df.residual","N","converged")],
               list(coefficients = coef.table,
-                   cov.coef=object$covmat,
-                   VarCov = VarCov.table))
+                   vcov.coef = vcov.cf,
+                   VarCov    = VarCov,
+                   se_VarCov = se_VarCov))
     p <- length(coef)
     if(correlation && p > 0) {
         dd <- sqrt(diag(ans$cov.coef))
@@ -611,22 +606,25 @@ print.summary.mmclogit <-
 
     cat("\n(Co-)Variances:\n")
     VarCov <- x$VarCov
+    se_VarCov <- x$se_VarCov
     for(k in 1:length(VarCov)){
-        cat("\nGrouping level:",names(VarCov)[k],"\n")
+        cat("Grouping level:",names(VarCov)[k],"\n")
         VarCov.k <- VarCov[[k]]
+        VarCov.k[] <- format(VarCov.k, digits=digits)
+        VarCov.k[upper.tri(VarCov.k)] <- ""
+        #print.default(VarCov.k, print.gap = 2, quote = FALSE)
+        VarCov.k <- format_Mat(VarCov.k,title="Estimate")
 
-        utri <- rep(upper.tri(VarCov.k[,,1]),2)
-        VarCov.k[utri] <- NA
-        VarCov.k <- ftable(VarCov.k,col.vars=3:2)
-        VarCov.k <- format(VarCov.k, digits=digits, quote=FALSE)[-3,-2]
-        VarCov.k[-(1:2),-1] <- gsub("NA","  ",VarCov.k[-(1:2),-1],fixed=TRUE)
-        
-        VarCov.k[1,] <- format(trimws(VarCov.k[1,]),justify="left")
-        VarCov.k <- format(VarCov.k)
-        cat(paste(apply(VarCov.k,1,paste,collapse=" "),collapse="\n"),"\n")
+        se_VarCov.k <- se_VarCov[[k]]
+        se_VarCov.k[] <- format(se_VarCov.k, digits=digits)
+        se_VarCov.k[upper.tri(se_VarCov.k)] <- ""
+        se_VarCov.k <- format_Mat(se_VarCov.k,title="Std.Err.",rownames=" ")
+
+        VarCov.k <- paste(VarCov.k,se_VarCov.k)
+        writeLines(VarCov.k)
     }
 
-    cat("\nNull Deviance:    ",   format(signif(x$null.deviance, digits)),
+    cat("\nNull Deviance:    ", format(signif(x$null.deviance, digits)),
         "\nResidual Deviance:", format(signif(x$deviance, digits)),
         "\nNumber of Fisher Scoring iterations: ", x$iter,
         "\nNumber of observations: ",x$N,
@@ -745,3 +743,67 @@ fuseMat <- function(x){
 
 cbindList <- function(x) do.call(cbind,x)
 fuseCols <- function(x,i) do.call(cbind,x[i,]) 
+
+format_Mat <- function(x,title="",rownames=NULL){
+    if(length(rownames))
+        rn <- format(c("",rownames))
+    else 
+        rn <- format(c("",rownames(x)))
+    x <- format(x)
+    x <- apply(x,1,paste,collapse=" ")
+    x <- format(c(title,x))
+    paste(rn,x)
+}
+
+update.mclogit <-  function(object, formula., dispersion, ...) {
+    if(inherits(object,"mmclogit") ||
+       missing(formula.) ||
+       formula. == object$formula && !missing(dispersion))
+        update_mclogit_dispersion(object,dispersion)
+    else NextMethod()
+}
+
+
+getFirst <- function(x) x[1]
+
+simulate.mclogit <- function(object, nsim = 1, seed = NULL, ...){
+
+    if(object$phi > 1)
+        stop("Simulating responses from models with oversdispersion is not supported yet")
+    
+    if (!exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) 
+        runif(1)
+    if (is.null(seed)) 
+        RNGstate <- get(".Random.seed", envir = .GlobalEnv)
+    else {
+        R.seed <- get(".Random.seed", envir = .GlobalEnv)
+        set.seed(seed)
+        RNGstate <- structure(seed, kind = as.list(RNGkind()))
+        on.exit(assign(".Random.seed", R.seed, envir = .GlobalEnv))
+    }
+    
+    weights <- object$weights
+    probs <- object$fitted.values
+    set <- object$s
+    i <- 1:length(probs)
+    
+    probs <- split(probs,set)
+    weights <- split(weights,set)
+    i <- split(i,set)
+    weights <- sapply(weights,getFirst)
+
+    yy <- mapply(rmultinom,size=weights,prob=probs,
+                 MoreArgs=list(n=nsim),SIMPLIFY=FALSE)
+    yy <- do.call(rbind,yy)
+
+    i <- unlist(i)
+    yy[i,] <- yy
+    rownames(yy) <- names(object$working.residuals)
+    colnames(yy) <- paste0("sim_",1:nsim)
+    yy <- as.data.frame(yy)
+    attr(yy,"seed") <- RNGstate
+    yy
+}
+
+simulate.mmclogit <- function(object, nsim = 1, seed = NULL, ...)
+    stop("Simulating responses from random-effects models is not supported yet")
