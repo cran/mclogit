@@ -93,6 +93,7 @@ mclogit <- function(
         stop("'weights' must be a numeric vector")
     
     Y <- as.matrix(model.response(mf, "any"))
+    if(!is.numeric(Y)) stop("The response matrix has to be numeric.")
     if(ncol(Y)<2) stop("need response counts and choice set indicators")
     sets <- Y[,2]
     sets <- match(sets,unique(sets))
@@ -134,12 +135,14 @@ mclogit <- function(
     if(ncol(X)<1)
         stop("No predictor variable remains in model")
     
-    if(!length(random))
-    fit <- mclogit.fit(y=Y,s=sets,w=weights,X=X,
+    if(!length(random)){
+        fit <- mclogit.fit(y=Y,s=sets,w=weights,X=X,
                        dispersion=dispersion,
                        control=control,
                        start = start,
                        offset = offset)
+        groups <- NULL
+    }
     else { ## random effects
         
         if(!length(method)) method <- "PQL"
@@ -189,6 +192,7 @@ mclogit <- function(
     fit <- c(fit,list(call = call, formula = formula,
                       terms = mt,
                       random = random,
+                      groups = groups,
                       data = data,
                       contrasts = contrasts,
                       xlevels = xlevels,
@@ -266,7 +270,9 @@ print.mclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
 }
 
 vcov.mclogit <- function(object,...){
-    return(object$covmat * object$phi)
+    phi <- object$phi
+    if(!length(phi)) phi <- 1
+    return(object$covmat * phi)
 }
 
 weights.mclogit <- function(object,...){
@@ -415,7 +421,7 @@ predict.mclogit <- function(object, newdata=NULL,type=c("link","response"),se.fi
     cf <- coef(object)
     X <- X[,names(cf), drop=FALSE]
     
-    eta <- c(X %*% coef(object))
+    eta <- c(X %*% cf)
     if(se.fit){
         V <- vcov(object)
         stopifnot(ncol(X)==ncol(V))
@@ -547,6 +553,14 @@ print.mmclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
     invisible(x)
 }
 
+vcov.mmclogit <- function(object,...){
+    info.coef <- object$info.coef
+    vcov.cf <- solve(info.coef)
+    return(vcov.cf)
+}
+
+
+
 summary.mmclogit <- function(object,dispersion=NULL,correlation = FALSE, symbolic.cor = FALSE,...){
 
     ## calculate coef table
@@ -650,6 +664,144 @@ print.summary.mmclogit <-
     invisible(x)
 }
 
+predict.mmclogit <- function(object, newdata=NULL,type=c("link","response"),se.fit=FALSE,
+                             conditional=TRUE, ...){
+    
+    type <- match.arg(type)
+    lhs <- object$formula[[2]]
+    rhs <- object$formula[-2]
+    random <- object$random  
+    if(length(lhs)==3)
+        sets <- lhs[[3]]
+    else stop("no way to determine choice set ids")
+    if(missing(newdata)){
+        mf <- object$model
+        sets <- mf[[1]][,2]
+        na.act <- object$na.action
+    }
+    else{
+        vars <- unique(c(all.vars(sets),all.vars(rhs),all.vars(object$call$random),all.vars(object$call$weights)))
+        fo <- paste("~",paste(vars,collapse=" + "))
+        fo <- as.formula(fo,env=parent.frame())
+        mf <- model.frame(fo,data=newdata,na.action=na.exclude)
+        sets <- mf[[sets]]
+        na.act <- attr(mf,"na.action")
+    }
+    X <- model.matrix(rhs,mf,
+                      contrasts.arg=object$contrasts,
+                      xlev=object$xlevels
+                      )
+    
+    cf <- coef(object)
+    X <- X[,names(cf), drop=FALSE]
+    eta <- c(X %*% cf)
+
+    if(object$method=="PQL" && conditional){
+        
+        rf <- random$formula
+        rt <- terms(rf)
+        groups <- random$groups
+        all.groups <- object$groups
+
+        Z <- model.matrix(rt,mf,
+                      contrasts.arg=object$contrasts,
+                      xlev=object$xlevels
+                      )
+        groups <- mf[groups]
+        groups <- lapply(groups,as.integer)
+        nlev <- length(groups)
+        if(nlev > 1){
+            for(i in 2:nlev){
+                mm <- attr(all.groups[[i]],"unique")
+                mmm <- cumprod(mm)
+                groups[[i]] <- mmm[i]*groups[[i-1]]+groups[[i]]
+            }
+        }
+        Z <- Map(mkZ2,
+                 all.groups=all.groups,
+                 groups=groups,
+                 rX=list(Z))
+        Z <- blockMatrix(Z)
+
+        random.effects <- object$random.effects
+        for(k in 1:nlev)
+            eta <- eta +  as.vector(Z[[k]]%*%random.effects[[k]])
+    }
+    
+    nvar <- ncol(X)
+    nobs <- nrow(X)
+    
+    if(se.fit || type=="response"){
+        j <- match(sets,unique(sets))
+        exp.eta <- exp(eta)
+        sum.exp.eta <- rowsum(exp.eta,j)
+        p <- exp.eta/sum.exp.eta[j]
+    }
+    if(se.fit){
+        nsets <- j[length(j)]
+        W <- Matrix(0,nrow=nobs,ncol=nsets)
+        i <- 1:nobs
+        W[cbind(i,j)] <- p
+        W <- Diagonal(x=p)-tcrossprod(W)
+        WX <- W%*%X
+        if(object$method=="PQL" && conditional){
+            WZ <- bMatProd(W,Z)
+            H <- object$info.fixed.random
+            K <- solve(H)
+        }
+    }
+    
+    if(type=="response") {
+        if(se.fit){
+            if(object$method=="PQL" && conditional){
+                WXZ <- structure(cbind(blockMatrix(WX),WZ),class="blockMatrix")
+                var.p <- bMatProd(WXZ,K)
+                var.p <- Map(`*`,WXZ,var.p)
+                var.p <- lapply(var.p,rowSums)
+                var.p <- Reduce(`+`,var.p)
+            }
+            else {
+                vcov.coef <- vcov(object)
+                var.p <- rowSums(WX*(WX%*%vcov.coef))
+            }
+            se.p <- sqrt(var.p)
+            if(is.null(na.act))
+                list(fit=p,se.fit=se.p) 
+            else
+                list(fit=napredict(na.act,p),
+                     se.fit=napredict(na.act,se.p))
+        }
+        else{
+            if(is.null(na.act)) p
+            else napredict(na.act,p)
+        }
+    }
+    else {
+        if(se.fit){
+            if(object$method=="PQL" && conditional){
+                XZ <- structure(cbind(blockMatrix(X),Z),class="blockMatrix")
+                var.eta <- bMatProd(XZ,K)
+                var.eta <- Map(`*`,XZ,var.eta)
+                var.eta <- lapply(var.eta,rowSums)
+                var.eta <- Reduce(`+`,var.eta)
+            }
+            else {
+                vcov.coef <- vcov(object)
+                var.eta <- rowSums(X*(X%*%vcov.coef))
+            }
+            se.eta <- sqrt(var.eta)
+            if(is.null(na.act))
+                list(fit=eta,se.fit=se.eta) 
+            else
+                list(fit=napredict(na.act,eta),
+                     se.fit=napredict(na.act,se.eta))
+        }
+        else {
+            if(is.null(na.act)) eta
+            else napredict(na.act,eta)
+        }
+    }
+}
 
 
 
@@ -676,6 +828,30 @@ mkZ <- function(groups,rX){
     Z[i.jk] <- rX
     Z
 }
+
+mkZ2 <- function(all.groups,
+                groups,
+                rX){
+    n <- length(groups)
+    ug <- unique(all.groups)
+    m <- length(ug)
+    p <- ncol(rX)
+    
+    Z <- Matrix(0,nrow=n,ncol=m*p)
+
+    i <- 1:n
+    k <- 1:p
+    j <- groups
+    
+    i <- rep(i,p)
+    jk <- rep((j-1)*p,p)+rep(k,each=n)
+    i.jk <- cbind(i,jk)
+
+    Z[i.jk] <- rX
+    Z
+}
+
+
 
 mkG <- function(rX){
 
@@ -756,9 +932,9 @@ format_Mat <- function(x,title="",rownames=NULL){
 }
 
 update.mclogit <-  function(object, formula., dispersion, ...) {
-    if(inherits(object,"mmclogit") ||
-       missing(formula.) ||
-       formula. == object$formula && !missing(dispersion))
+    if(!inherits(object,"mmclogit") &&
+       (missing(formula.) || formula. == object$formula)
+       && !missing(dispersion))
         update_mclogit_dispersion(object,dispersion)
     else NextMethod()
 }
@@ -807,3 +983,4 @@ simulate.mclogit <- function(object, nsim = 1, seed = NULL, ...){
 
 simulate.mmclogit <- function(object, nsim = 1, seed = NULL, ...)
     stop("Simulating responses from random-effects models is not supported yet")
+

@@ -1,3 +1,26 @@
+2020-11-03:
+  - Correct URLs in DESCRIPTION
+
+2020-09-09:
+  - Fix reference to weights in 'predict()' methods
+
+2020-08-06:
+  - Let 'mclogit'/'mblogit' handle empty responses (i.e. where counts sum to
+    zero) correclty.
+  - Make 'mclogit' complain about non-numeric responses  
+
+2020-07-17:
+  - Documented prediction methods.
+  - Improved flexibility of prediction methods. 
+
+2020-07-16:
+  - Implemented reasonable 'predict' method for mmblogit and mmclogit objects.
+
+2020-07-15:
+  - Bugfix: Make 'update' work with missing 'dispersion=' argument.
+  - Bugfix: Make 'vcov' work for objects without 'phi' component.
+  - Add 'vcov' method for 'mmclogit' objects.
+
 2020-06-27:
   - Documented 'simulate()' methods.
 

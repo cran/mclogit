@@ -1,6 +1,5 @@
 \name{mclogit}
 \alias{mclogit}
-\alias{predict.mclogit}
 \alias{anova.mclogit}
 \alias{print.mclogit}
 \alias{vcov.mclogit}
@@ -9,7 +8,6 @@
 \alias{summary.mclogit}
 \alias{print.summary.mclogit}
 \alias{fitted.mclogit}
-\alias{predict.mclogit}
 \alias{residuals.mclogit}
 \alias{weights.mclogit}
 \alias{AIC.mclogit}
@@ -195,12 +193,14 @@ summary(mclogit(
   data=Transport
   ))
 
+\donttest{ # This takes a bit longer.
 data(electors)
 
 summary(mclogit(
   cbind(Freq,interaction(time,class))~econ.left/class+welfare/class+auth/class,
   random=~1|party.time,
   data=within(electors,party.time<-interaction(party,time))))
+}
 }
 \keyword{models}
 \keyword{regression}

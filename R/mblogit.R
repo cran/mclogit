@@ -77,8 +77,8 @@
 #'    \url{https://doi.org/10.1080/01621459.1993.10594284}
 #'
 #' 
-#' @aliases predict.mblogit print.mblogit summary.mblogit print.summary.mblogit fitted.mblogit
-#' predict.mblogit, weights.mblogit
+#' @aliases print.mblogit summary.mblogit print.summary.mblogit fitted.mblogit
+#' weights.mblogit
 #' print.mmblogit summary.mmblogit print.summary.mmblogit
 mblogit <- function(formula,
                     data=parent.frame(),
@@ -174,6 +174,13 @@ mblogit <- function(formula,
             Y[cbind(i,j)] <- prior.weights
             w <- rowSums(Y)
             Y <- Y/w
+            if(any(w==0)){
+                Y[w==0,] <- 0
+                N <- sum(weights[w>0])
+                warning(sprintf("ignoring %d observerations with counts that sum to zero",
+                                sum(w==0)),
+                        call. = FALSE, immediate. = TRUE)
+            }
             Y <- as.vector(t(Y))
             weights <- rep(w,each=m)
             D <- diag(m)[,-1, drop=FALSE]
@@ -281,7 +288,8 @@ mblogit <- function(formula,
     }
     fit <- c(fit,list(call = call, formula = formula,
                       terms = mt,
-                      random = NULL,
+                      random = random,
+                      groups = groups,
                       data = data,
                       contrasts = contrasts,
                       xlevels = xlevels,
@@ -294,8 +302,9 @@ mblogit <- function(formula,
                       response.type=response.type,
                       from.table=from.table))
 
-    if(length(random))
+    if(length(random)){
         class(fit) <- c("mmblogit","mblogit","mmclogit","mclogit","lm")
+    }
     else
         class(fit) <- c("mblogit","mclogit","lm")
     fit
@@ -701,4 +710,160 @@ sample_factor <- function(probs, nsim =1, seed = NULL, ...){
     yy <- t(yy)
     attr(yy,"seed") <- RNGstate
     return(yy)
+}
+
+lenuniq <- function(x) length(unique(x))
+
+predict.mmblogit <- function(object, newdata=NULL,type=c("link","response"),se.fit=FALSE,
+                             conditional=TRUE, ...){
+    
+    type <- match.arg(type)
+    rhs <- object$formula[-2]
+    random <- object$random  
+    if(missing(newdata)){
+        mf <- object$model
+        na.act <- object$na.action
+    }
+    else{
+        vars <- unique(c(all.vars(rhs),all.vars(object$call$random),all.vars(object$call$weights)))
+        fo <- paste("~",paste(vars,collapse=" + "))
+        fo <- as.formula(fo,env=parent.frame())
+        mf <- model.frame(fo,data=newdata,na.action=na.exclude)
+        na.act <- attr(mf,"na.action")
+    }
+    X <- model.matrix(rhs,mf,
+                      contrasts.arg=object$contrasts,
+                      xlev=object$xlevels
+                      )
+    D <- object$D
+    XD <- X%x%D
+    eta <- c(XD %*% coef(object))
+
+    if(object$method=="PQL" && conditional){
+
+        rf <- random$formula
+        rt <- terms(rf)
+        groups <- random$groups
+        all.groups <- object$groups
+
+        Z <- model.matrix(rt,mf,
+                      contrasts.arg=object$contrasts,
+                      xlev=object$xlevels
+                      )
+        ZD <- Z%x%D
+
+        colnames(ZD) <- paste0(rep(colnames(D),ncol(Z)),
+                               "~",
+                               rep(colnames(Z),each=ncol(D)))
+        colnames(ZD) <- gsub("(Intercept)","1",colnames(ZD),fixed=TRUE)
+
+        groups <- mf[groups]
+        groups <- lapply(groups,as.integer)
+        nlev <- length(groups)
+        if(nlev > 1){
+            for(i in 2:nlev){
+                mm <- attr(all.groups[[i]],"unique")
+                mmm <- cumprod(mm)
+                groups[[i]] <- mmm[i]*groups[[i-1]]+groups[[i]]
+            }
+        }
+
+        groups <- lapply(groups,rep,each=nrow(D))
+        
+        ZD <- Map(mkZ2,
+                  all.groups=all.groups,
+                  groups=groups,
+                  rX=list(ZD))
+        ZD <- blockMatrix(ZD)
+
+        random.effects <- object$random.effects
+        for(k in 1:nlev)
+            eta <- eta +  as.vector(ZD[[k]]%*%random.effects[[k]])
+    }
+    
+    rspmat <- function(x){
+        y <- t(matrix(x,nrow=nrow(D)))
+        colnames(y) <- rownames(D)
+        y
+    }
+    eta <- rspmat(eta)
+
+    nvar <- ncol(X)
+    nobs <- nrow(X)
+    
+    if(se.fit || type=="response"){
+        exp.eta <- exp(eta)
+        sum.exp.eta <- rowSums(exp.eta)
+        p <- exp.eta/sum.exp.eta
+    }
+    if(se.fit){
+        ncat <- ncol(p)
+        W <- Matrix(0,nrow=nobs*ncat,ncol=nobs)
+        i <- seq.int(ncat*nobs)
+        j <- rep(1:nobs,each=ncat)
+        pv <- as.vector(t(p))
+        W[cbind(i,j)] <- pv
+        W <- Diagonal(x=pv)-tcrossprod(W)
+        WX <- W%*%XD
+        if(object$method=="PQL"){
+            WZ <- bMatProd(W,ZD)
+            H <- object$info.fixed.random
+            K <- solve(H)
+        }
+    }
+    
+    if(type=="response") {
+        if(se.fit){
+            if(object$method=="PQL" && conditional){
+                WXZ <- structure(cbind(blockMatrix(WX),WZ),class="blockMatrix")
+                var.p <- bMatProd(WXZ,K)
+                var.p <- Map(`*`,WXZ,var.p)
+                var.p <- lapply(var.p,rowSums)
+                var.p <- Reduce(`+`,var.p)
+            }
+            else {
+                vcov.coef <- vcov(object)
+                var.p <- rowSums(WX*(WX%*%vcov.coef))
+            }
+            se.p <- sqrt(var.p)
+            se.p <- rspmat(se.p)
+            if(is.null(na.act))
+                list(fit=p,se.fit=se.p) 
+            else
+                list(fit=napredict(na.act,p),
+                     se.fit=napredict(na.act,se.p))
+        }
+        else{
+            if(is.null(na.act)) p
+            else napredict(na.act,p)
+        }
+    }
+    else {
+        eta <- eta[,-1,drop=FALSE]
+        if(se.fit){
+            if(object$method=="PQL" && conditional){
+                XZ <- structure(cbind(blockMatrix(XD),ZD),class="blockMatrix")
+                var.eta <- bMatProd(XZ,K)
+                var.eta <- Map(`*`,XZ,var.eta)
+                var.eta <- lapply(var.eta,rowSums)
+                var.eta <- Reduce(`+`,var.eta)
+            }
+            else {
+                vcov.coef <- vcov(object)
+                var.eta <- rowSums(XD*(XD%*%vcov.coef))
+            }
+            se.eta <- sqrt(var.eta)
+            se.eta <- rspmat(se.eta)
+            se.eta <- se.eta[,-1,drop=FALSE]
+            if(is.null(na.act))
+                list(fit=eta,se.fit=se.eta) 
+            else
+                list(fit=napredict(na.act,eta),
+                     se.fit=napredict(na.act,se.eta))
+        }
+        else {
+            if(is.null(na.act)) eta
+            else napredict(na.act,eta)
+        }
+    }
 }
