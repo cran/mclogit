@@ -42,6 +42,18 @@ listConstInSets <- function(X,sets){
     ans
 }
 
+groupConstInSets <- function(X,sets){
+    ans <- logical(length(X))
+    for(i in 1:length(X)){
+        v <- tapply(X[[i]],sets,varies)
+        ans[i] <- !all(v) 
+    }
+    ans
+}
+
+varies <- function(x)
+    !all(duplicated(x)[-1L])
+
 
 mclogit <- function(
                 formula,
@@ -77,21 +89,25 @@ mclogit <- function(
     mf[[1]] <- as.name("model.frame")
 
     if(length(random)){
+        mf0 <- eval(mf, parent.frame())
+        mt <- attr(mf0,"terms")
         rf <- paste(c(".~.",all.vars(random)),collapse="+")
         rf <- as.formula(rf)
         mff <- structure(mf$formula,class="formula")
         mf$formula <- update(mff,rf)
+        mf <- eval(mf, parent.frame())
     }
-    
-    mf <- eval(mf, parent.frame())
-    mt <- terms(formula)
+    else {
+        mf <- eval(mf, parent.frame())
+        mt <- attr(mf,"terms")
+    }
     
     na.action <- attr(mf,"na.action")
     weights <- as.vector(model.weights(mf))
     offset <- as.vector(model.offset(mf))
     if(!is.null(weights) && !is.numeric(weights))
         stop("'weights' must be a numeric vector")
-    
+
     Y <- as.matrix(model.response(mf, "any"))
     if(!is.numeric(Y)) stop("The response matrix has to be numeric.")
     if(ncol(Y)<2) stop("need response counts and choice set indicators")
@@ -150,19 +166,21 @@ mclogit <- function(
         random <- setupRandomFormula(random)
         rt <- terms(random$formula)
         
-        groups <- random$groups
         Z <- model.matrix(rt,mf,contrasts)
+        d <- ncol(Z)
+        VarCov.names <- colnames(Z)
+
+        groups <- random$groups
         groups <- mf[groups]
-        
+        groups <- lapply(groups,as.factor)
         nlev <- length(groups)
-        groups[[1]] <- quickInteraction(groups[1])
 
         if(nlev > 1){
             for(i in 2:nlev)
-                groups[[i]] <- quickInteraction(groups[c(i-1,i)])
+                groups[[i]] <- interaction(groups[c(i-1,i)])
         }
 
-        gconst <- listConstInSets(groups,sets)
+        gconst <- groupConstInSets(groups,sets)
         if(any(gconst)){
             rconst <- matConstInSets(Z,sets)
             if(any(rconst)){
@@ -175,12 +193,18 @@ mclogit <- function(
             if(ncol(Z)<1)
                 stop("No predictor variable remains in random part of the model.\nPlease reconsider your model specification.")
         }
+
+        Z <- lapply(groups,mkZ,rX=Z)
+        Z <- blockMatrix(Z)
         
-        fit <- mmclogit.fitPQLMQL(Y,sets,weights,X,Z,groups,
+        fit <- mmclogit.fitPQLMQL(Y,sets,weights,X,Z,
+                                  d=d,
                                   method = method,
                                   estimator=estimator,
                                   control=control,
                                   offset = offset)
+        for(k in 1:nlev)
+            dimnames(fit$VarCov[[k]]) <- list(VarCov.names,VarCov.names)
     }
     
     if(x) fit$x <- X
@@ -396,7 +420,8 @@ fitted.mclogit <- function(object,type=c("probabilities","counts"),...){
 predict.mclogit <- function(object, newdata=NULL,type=c("link","response"),se.fit=FALSE,...){
 
     type <- match.arg(type)
-    rhs <- object$formula[-2]
+    mt <- terms(object)
+    rhs <- delete.response(mt)
     if(missing(newdata)){
         m <- model.frame(object$formula,data=object$data)
         set <- m[[1]][,2]
@@ -537,6 +562,7 @@ print.mmclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
 
     cat("\n(Co-)Variances:\n")
     VarCov <- x$VarCov
+    names(VarCov) <- names(x$groups)
     for(k in 1:length(VarCov)){
         cat("Grouping level:",names(VarCov)[k],"\n")
         VarCov.k <- VarCov[[k]]
@@ -567,7 +593,7 @@ summary.mmclogit <- function(object,dispersion=NULL,correlation = FALSE, symboli
 
     coef <- object$coefficients
     info.coef <- object$info.coef
-    vcov.cf <- solve(info.coef)
+    vcov.cf <- solve2(info.coef)
     var.cf <- diag(vcov.cf)
     s.err <- sqrt(var.cf)
     zvalue <- coef/s.err
@@ -584,10 +610,13 @@ summary.mmclogit <- function(object,dispersion=NULL,correlation = FALSE, symboli
     VarCov <- object$VarCov
     info.lambda <- object$info.lambda
     se_VarCov <- se_Phi(VarCov,info.lambda)
+
+    names(VarCov) <- names(object$groups)
+    names(se_VarCov) <- names(VarCov)
     
     ans <- c(object[c("call","terms","deviance","contrasts",
                       "null.deviance","iter","na.action","model.df",
-                      "df.residual","N","converged")],
+                      "df.residual","groups","N","converged")],
               list(coefficients = coef.table,
                    vcov.coef = vcov.cf,
                    VarCov    = VarCov,
@@ -600,7 +629,8 @@ summary.mmclogit <- function(object,dispersion=NULL,correlation = FALSE, symboli
         ans$symbolic.cor <- symbolic.cor
     }
 
- 
+    ans$ngrps <- sapply(object$groups,nlevels)
+    
     class(ans) <- "summary.mmclogit"
     return(ans)
 }
@@ -640,9 +670,17 @@ print.summary.mmclogit <-
 
     cat("\nNull Deviance:    ", format(signif(x$null.deviance, digits)),
         "\nResidual Deviance:", format(signif(x$deviance, digits)),
-        "\nNumber of Fisher Scoring iterations: ", x$iter,
-        "\nNumber of observations: ",x$N,
-        "\n")
+        "\nNumber of Fisher Scoring iterations: ", x$iter)
+
+    cat("\nNumber of observations")
+    for(i in seq_along(x$groups)){
+        g <- nlevels(x$groups[[i]])
+        nm.group <- names(x$groups)[i]
+        cat("\n  Groups by",
+            paste0(nm.group,": ",format(g)))
+    }
+    cat("\n  Individual observations: ",x$N)
+
     correl <- x$correlation
     if(!is.null(correl)) {
         p <- NCOL(correl)
@@ -707,20 +745,19 @@ predict.mmclogit <- function(object, newdata=NULL,type=c("link","response"),se.f
                       contrasts.arg=object$contrasts,
                       xlev=object$xlevels
                       )
+        groups <- random$groups
+        orig.groups <- object$groups
+        olevels <- lapply(orig.groups,levels)
         groups <- mf[groups]
-        groups <- lapply(groups,as.integer)
+        groups <- Map(factor,x=groups,levels=olevels)
         nlev <- length(groups)
         if(nlev > 1){
             for(i in 2:nlev){
-                mm <- attr(all.groups[[i]],"unique")
-                mmm <- cumprod(mm)
-                groups[[i]] <- mmm[i]*groups[[i-1]]+groups[[i]]
+                groups[[i]] <- interaction(groups[c(i-1,i)])
             }
         }
-        Z <- Map(mkZ2,
-                 all.groups=all.groups,
-                 groups=groups,
-                 rX=list(Z))
+        Z <- lapply(groups,mkZ,
+                    rX=Z)
         Z <- blockMatrix(Z)
 
         random.effects <- object$random.effects
@@ -810,16 +847,14 @@ tr <- function(x) sum(diag(x))
 mkZ <- function(groups,rX){
 
     n <- length(groups)
-    ug <- unique(groups)
-    m <- length(ug)
+    m <- nlevels(groups)
     p <- ncol(rX)
-    n.j <- tabulate(groups,m)
     
     Z <- Matrix(0,nrow=n,ncol=m*p)
 
     i <- 1:n
     k <- 1:p
-    j <- groups
+    j <- as.integer(groups)
     
     i <- rep(i,p)
     jk <- rep((j-1)*p,p)+rep(k,each=n)
@@ -984,3 +1019,17 @@ simulate.mclogit <- function(object, nsim = 1, seed = NULL, ...){
 simulate.mmclogit <- function(object, nsim = 1, seed = NULL, ...)
     stop("Simulating responses from random-effects models is not supported yet")
 
+eigen.solve <- function(x){
+    ev <- eigen(x)
+    d <- ev$values
+    V <- ev$vectors
+    id <- 1/d
+    V %*% (id*t(V))
+}
+
+solve2 <- function(x){
+    ix <- try(solve(x))
+    if(inherits(ix,"try-error"))
+        return(eigen.solve(x))
+    else return(ix)
+}

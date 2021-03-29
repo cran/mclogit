@@ -114,21 +114,27 @@ mblogit <- function(formula,
     mf[[1]] <- as.name("model.frame")
 
     if(length(random)){
+        mf0 <- eval(mf, parent.frame())
+        mt <- attr(mf0,"terms")
         rf <- paste(c(".~.",all.vars(random)),collapse="+")
         rf <- as.formula(rf)
         mff <- structure(mf$formula,class="formula")
         mf$formula <- update(mff,rf)
+        mf <- eval(mf, parent.frame())
     }
     else if(length(groups)){
+        mf0 <- eval(mf, parent.frame())
+        mt <- attr(mf0,"terms")
         gf <- paste(c(".~.",all.vars(groups)),collapse="+")
-        gf <- as.formula(rf)
+        gf <- as.formula(gf)
         mff <- structure(mf$formula,class="formula")
         mf$formula <- update(mff,gf)
+        mf <- eval(mf, parent.frame())
     }
-    
-    mf <- eval(mf, parent.frame())
-    mt <- terms(formula)
-    attr(mf,"terms") <- mt
+    else {
+        mf <- eval(mf, parent.frame())
+        mt <- attr(mf,"terms")
+    }
     
     na.action <- attr(mf,"na.action")
     weights <- as.vector(model.weights(mf))
@@ -241,33 +247,38 @@ mblogit <- function(formula,
         random <- setupRandomFormula(random)
         rt <- terms(random$formula)
 
-        groups <- random$groups
         Z <- model.matrix(rt,mf,contrasts)
 
         ZD <- Z%x%D
-
+        d <- ncol(ZD)
+        
         colnames(ZD) <- paste0(rep(colnames(D),ncol(Z)),
                                "~",
                                rep(colnames(Z),each=ncol(D)))
         colnames(ZD) <- gsub("(Intercept)","1",colnames(ZD),fixed=TRUE)
+        VarCov.names <- colnames(ZD)
         
+        groups <- random$groups
         groups <- mf[groups]
-        groups <- lapply(groups,rep,each=nrow(D))
-        
+        groups <- lapply(groups,as.factor)
         nlev <- length(groups)
-        groups[[1]] <- quickInteraction(groups[1])
 
         if(nlev > 1){
             for(i in 2:nlev)
-                groups[[i]] <- quickInteraction(groups[c(i-1,i)])
+                groups[[i]] <- interaction(groups[c(i-1,i)])
         }
-
+        groups <- lapply(groups,rep,each=nrow(D))
+        
+        ZD <- lapply(groups,mkZ,rX=ZD)
+        ZD <- blockMatrix(ZD)
         fit <- mmclogit.fitPQLMQL(y=Y,s=s,w=weights,
-                                  X=XD,Z=ZD,groups=groups,
+                                  X=XD,Z=ZD,d=d,
                                   method=method,
                                   estimator=estimator,
                                   control=control,
                                   offset = offset)
+        for(k in 1:nlev)
+            dimnames(fit$VarCov[[k]]) <- list(VarCov.names,VarCov.names)
     }
     
     coefficients <- fit$coefficients
@@ -435,7 +446,8 @@ fitted.mblogit <- function(object,type=c("probabilities","counts"),...){
 predict.mblogit <- function(object, newdata=NULL,type=c("link","response"),se.fit=FALSE,...){
   
   type <- match.arg(type)
-  rhs <- object$formula[-2]
+  mt <- terms(object)
+  rhs <- delete.response(mt)
   if(missing(newdata)){
     m <- model.frame(rhs,data=object$model)
     na.act <- object$na.action
@@ -448,6 +460,7 @@ predict.mblogit <- function(object, newdata=NULL,type=c("link","response"),se.fi
                     contrasts.arg=object$contrasts,
                     xlev=object$xlevels
   )
+  rn <- rownames(X)
   D <- object$D
   XD <- X%x%D
   rspmat <- function(x){
@@ -458,6 +471,7 @@ predict.mblogit <- function(object, newdata=NULL,type=c("link","response"),se.fi
   
   eta <- c(XD %*% coef(object))
   eta <- rspmat(eta)
+  rownames(eta) <- rn
   if(se.fit){
     V <- vcov(object)
     stopifnot(ncol(XD)==ncol(V))
@@ -475,7 +489,7 @@ predict.mblogit <- function(object, newdata=NULL,type=c("link","response"),se.fi
       wX <- p.long*(XD - rowsum(p.long*XD,s)[s,,drop=FALSE])
       se.p.long <- sqrt(rowSums(wX * (wX %*% V)))
       se.p <- rspmat(se.p.long)
-      
+      rownames(se.p) <- rownames(p)
       if(is.null(na.act))
         list(fit=p,se.fit=se.p)
       else
@@ -614,11 +628,19 @@ print.summary.mmblogit <-
         writeLines(VarCov.k)
     }
 
-    cat("\nNull Deviance:    ",   format(signif(x$null.deviance, digits)),
+    cat("\nNull Deviance:    ", format(signif(x$null.deviance, digits)),
         "\nResidual Deviance:", format(signif(x$deviance, digits)),
-        "\nNumber of Fisher Scoring iterations: ", x$iter,
-        "\nNumber of observations: ",x$N,
-        "\n")
+        "\nNumber of Fisher Scoring iterations: ", x$iter)
+
+    cat("\nNumber of observations")
+    for(i in seq_along(x$groups)){
+        g <- nlevels(x$groups[[i]])
+        nm.group <- names(x$groups)[i]
+        cat("\n  Groups by",
+            paste0(nm.group,": ",format(g)))
+    }
+    cat("\n  Individual observations: ",x$N)
+
     correl <- x$correlation
     if(!is.null(correl)) {
       p <- NCOL(correl)
@@ -725,7 +747,7 @@ predict.mmblogit <- function(object, newdata=NULL,type=c("link","response"),se.f
         na.act <- object$na.action
     }
     else{
-        vars <- unique(c(all.vars(rhs),all.vars(object$call$random),all.vars(object$call$weights)))
+        vars <- unique(c(all.vars(rhs),all.vars(object$call$random)))
         fo <- paste("~",paste(vars,collapse=" + "))
         fo <- as.formula(fo,env=parent.frame())
         mf <- model.frame(fo,data=newdata,na.action=na.exclude)
@@ -743,8 +765,6 @@ predict.mmblogit <- function(object, newdata=NULL,type=c("link","response"),se.f
 
         rf <- random$formula
         rt <- terms(rf)
-        groups <- random$groups
-        all.groups <- object$groups
 
         Z <- model.matrix(rt,mf,
                       contrasts.arg=object$contrasts,
@@ -757,23 +777,20 @@ predict.mmblogit <- function(object, newdata=NULL,type=c("link","response"),se.f
                                rep(colnames(Z),each=ncol(D)))
         colnames(ZD) <- gsub("(Intercept)","1",colnames(ZD),fixed=TRUE)
 
+        groups <- random$groups
+        orig.groups <- object$groups
+        olevels <- lapply(orig.groups,levels)
         groups <- mf[groups]
-        groups <- lapply(groups,as.integer)
+        groups <- Map(factor,x=groups,levels=olevels)
+        groups <- lapply(groups,rep,each=nrow(D))
         nlev <- length(groups)
+
         if(nlev > 1){
-            for(i in 2:nlev){
-                mm <- attr(all.groups[[i]],"unique")
-                mmm <- cumprod(mm)
-                groups[[i]] <- mmm[i]*groups[[i-1]]+groups[[i]]
-            }
+            for(i in 2:nlev)
+                groups[[i]] <- interaction(groups[c(i-1,i)])
         }
 
-        groups <- lapply(groups,rep,each=nrow(D))
-        
-        ZD <- Map(mkZ2,
-                  all.groups=all.groups,
-                  groups=groups,
-                  rX=list(ZD))
+        ZD <- lapply(groups,mkZ,rX=ZD)
         ZD <- blockMatrix(ZD)
 
         random.effects <- object$random.effects
