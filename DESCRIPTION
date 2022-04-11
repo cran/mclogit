@@ -2,8 +2,8 @@ Package: mclogit
 Type: Package
 Title: Multinomial Logit Models, with or without Random Effects or
         Overdispersion
-Version: 0.8.7.3
-Date: 2021-03-19
+Version: 0.9.4
+Date: 2022-04-10
 Author: Martin Elff
 Maintainer: Martin Elff <mclogit@elff.eu>
 Description: Provides estimators for multinomial logit models in their
@@ -16,11 +16,12 @@ License: GPL-2
 Depends: stats, Matrix
 Imports: memisc, methods
 Suggests: MASS, nnet
+Enhances: emmeans
 LazyLoad: Yes
 URL: http://mclogit.elff.eu,https://github.com/melff/mclogit/
 BugReports: https://github.com/melff/mclogit/issues
-RoxygenNote: 7.1.0
+RoxygenNote: 7.1.1
 NeedsCompilation: no
-Packaged: 2021-03-19 21:41:00 UTC; elff
+Packaged: 2022-04-11 09:03:13 UTC; elff
 Repository: CRAN
-Date/Publication: 2021-03-29 12:30:02 UTC
+Date/Publication: 2022-04-11 09:42:34 UTC

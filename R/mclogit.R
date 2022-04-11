@@ -27,8 +27,8 @@ quickInteraction <- function(by){
 matConstInSets <- function(X,sets){
     ans <- logical(ncol(X))
     for(i in 1:ncol(X)){
-        v <- tapply(X[,i],sets,var)
-        ans[i] <- all(v[is.finite(v)]==0) 
+        v <- tapply(X[,i],sets,varies)
+        ans[i] <- !any(v) 
     }
     ans
 }
@@ -36,8 +36,8 @@ matConstInSets <- function(X,sets){
 listConstInSets <- function(X,sets){
     ans <- logical(length(X))
     for(i in 1:length(X)){
-        v <- tapply(X[[i]],sets,var)
-        ans[i] <- all(v[is.finite(v)]==0) 
+        v <- tapply(X[[i]],sets,varies)
+        ans[i] <- !any(v) 
     }
     ans
 }
@@ -46,7 +46,7 @@ groupConstInSets <- function(X,sets){
     ans <- logical(length(X))
     for(i in 1:length(X)){
         v <- tapply(X[[i]],sets,varies)
-        ans[i] <- !all(v) 
+        ans[i] <- !any(v) 
     }
     ans
 }
@@ -87,13 +87,28 @@ mclogit <- function(
     mf <- mf[c(1, m)]
     mf$drop.unused.levels <- TRUE
     mf[[1]] <- as.name("model.frame")
+    if(as.character(formula[[2]][[1]])=="|")
+        mf$formula[[2]][[1]] <- as.name("cbind")
 
     if(length(random)){
         mf0 <- eval(mf, parent.frame())
         mt <- attr(mf0,"terms")
-        rf <- paste(c(".~.",all.vars(random)),collapse="+")
+        if(is_formula(random)){
+            rf <- paste(c(".~.",all.vars(random)),collapse="+")
+        }
+        else if(is.list(random)) {
+            rf <- paste(c(".~.",unlist(lapply(random,all.vars))),collapse="+")
+        }
+        else
+            stop("'random' argument must be either a formula or a list of formulae")
         rf <- as.formula(rf)
-        mff <- structure(mf$formula,class="formula")
+        if (typeof(mf$formula) == "symbol") {
+          mff <- formula
+        }
+        else {
+          mff <- structure(mf$formula,class="formula")
+        }
+        mff <- eval(mff, parent.frame())
         mf$formula <- update(mff,rf)
         mf <- eval(mf, parent.frame())
     }
@@ -163,48 +178,71 @@ mclogit <- function(
         
         if(!length(method)) method <- "PQL"
 
-        random <- setupRandomFormula(random)
-        rt <- terms(random$formula)
-        
-        Z <- model.matrix(rt,mf,contrasts)
-        d <- ncol(Z)
-        VarCov.names <- colnames(Z)
+        if(inherits(random,"formula"))
+            random <- list(random)
 
-        groups <- random$groups
-        groups <- mf[groups]
-        groups <- lapply(groups,as.factor)
-        nlev <- length(groups)
+        random <- lapply(random,setupRandomFormula)
+        rt <- lapply(random,"[[","formula")
+        rt <- lapply(rt,terms)
+        suppressWarnings(Z <- lapply(rt,model.matrix,mf,
+                                     contrasts.arg=contrasts))
+        # Use suppressWarnings() to stop complaining about unused contasts
 
-        if(nlev > 1){
-            for(i in 2:nlev)
-                groups[[i]] <- interaction(groups[c(i-1,i)])
-        }
-
-        gconst <- groupConstInSets(groups,sets)
-        if(any(gconst)){
-            rconst <- matConstInSets(Z,sets)
-            if(any(rconst)){
-                cat("\n")
-                warning("removing ",
-                        gsub("(Intercept)","intercept",paste(colnames(Z)[rconst],collapse=","),fixed=TRUE),
-                        " from random part of the model\n because of insufficient within-choice set variance")
-                Z <- Z[,!rconst,drop=FALSE]
+        nn <- length(Z)
+        randstruct <- lapply(1:nn,function(k){
+            group.labels <- random[[k]]$groups
+            groups <- mf[group.labels]
+            groups <- lapply(groups,as.factor)
+            nlev <- length(groups)
+            if(nlev > 1){
+                for(i in 2:nlev){
+                    groups[[i]] <- interaction(groups[c(i-1,i)])
+                    group.labels[i] <- paste(group.labels[i-1],group.labels[i],sep=":")
+                }
             }
-            if(ncol(Z)<1)
-                stop("No predictor variable remains in random part of the model.\nPlease reconsider your model specification.")
-        }
-
-        Z <- lapply(groups,mkZ,rX=Z)
-        Z <- blockMatrix(Z)
-        
+            Z_k <- Z[[k]]
+            gconst <- groupConstInSets(groups,sets) # Is grouping factor constant within choice sets?
+            if(any(gconst)){
+                # If grouping factor is constant within choice sets, remove covariates that
+                # are constants within choice sets
+                rconst <- matConstInSets(Z_k,sets)
+                if(any(rconst)){
+                    cat("\n")
+                    warning("removing ",
+                            gsub("(Intercept)","intercept",paste(colnames(Z_k)[rconst],collapse=","),fixed=TRUE),
+                            " from random part of the model\n because of insufficient within-choice set variance")
+                    Z_k <- Z_k[,!rconst,drop=FALSE]
+                }
+                if(ncol(Z_k)<1)
+                    stop("No predictor variable remains in random part of the model.\nPlease reconsider your model specification.")
+            }
+            d <- ncol(Z_k)
+            colnames(Z_k) <- gsub("(Intercept)","(Const.)",colnames(Z_k),fixed=TRUE)
+            VarCov.names.k <- rep(list(colnames(Z_k)),nlev)
+            Z_k <- lapply(groups,mkZ,rX=Z_k)
+            d <- rep(d,nlev)
+            names(groups) <- group.labels
+            list(Z_k,groups,d,VarCov.names.k)
+        })
+        Z <- lapply(randstruct,`[[`,1)
+        groups <- lapply(randstruct,`[[`,2)
+        d <- lapply(randstruct,`[[`,3)
+        VarCov.names <- lapply(randstruct,`[[`,4)
+        Z <- unlist(Z,recursive=FALSE)
+        groups <- unlist(groups,recursive=FALSE)
+        VarCov.names <- unlist(VarCov.names,recursive=FALSE)
+        d <- unlist(d)
+        Z <- blockMatrix(Z,ncol=length(Z))
         fit <- mmclogit.fitPQLMQL(Y,sets,weights,X,Z,
                                   d=d,
                                   method = method,
                                   estimator=estimator,
                                   control=control,
                                   offset = offset)
+        nlev <- length(fit$VarCov)
         for(k in 1:nlev)
-            dimnames(fit$VarCov[[k]]) <- list(VarCov.names,VarCov.names)
+            dimnames(fit$VarCov[[k]]) <- list(VarCov.names[[k]],VarCov.names[[k]])
+        names(fit$VarCov) <- names(groups)
     }
     
     if(x) fit$x <- X
@@ -265,11 +303,21 @@ setupRandomFormula <- function(formula){
     groups <- fo
     fo[2] <- fo[[2]][2]
     groups[2] <- groups[[2]][3]
+    checkRandomFormula(groups[[2]])
     list(
         formula=structure(fo,class="formula"),
         groups=all.vars(groups)
     )
 }
+
+checkRandomFormula <- function(x){
+    l <- as.list(x)
+    if(length(l) < 3) return(NULL)
+    if(!as.character(l[[1]])=="/") stop("Invalid random formula",call.=FALSE)
+    x <- x[[2]]
+    if(length(x)>1) Recall(x)
+}
+
 
 
 print.mclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
@@ -420,19 +468,21 @@ fitted.mclogit <- function(object,type=c("probabilities","counts"),...){
 predict.mclogit <- function(object, newdata=NULL,type=c("link","response"),se.fit=FALSE,...){
 
     type <- match.arg(type)
-    mt <- terms(object)
-    rhs <- delete.response(mt)
+    fo <- object$formula
+    if(as.character(fo[[2]][[1]])=="|")
+        fo[[2]][[1]] <- as.name("cbind")
+    lhs <- fo[[2]]
+    rhs <- fo[-2]
+    if(length(lhs)==3)
+        sets <- lhs[[3]]
+    else stop("no way to determine choice set ids")
     if(missing(newdata)){
-        m <- model.frame(object$formula,data=object$data)
+        m <- model.frame(fo,data=object$data)
         set <- m[[1]][,2]
         na.act <- object$na.action
     }
     else{
-        fo <- object$formula
-        lhs <- fo[[2]]
-        if(deparse(lhs[[1]])=="cbind"){
-            lhs <- lhs[[3]]
-        }
+        lhs <- lhs[[3]]
         fo[[2]] <- lhs
         m <- model.frame(fo,data=newdata)
         set <- m[[1]]
@@ -564,6 +614,7 @@ print.mmclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
     VarCov <- x$VarCov
     names(VarCov) <- names(x$groups)
     for(k in 1:length(VarCov)){
+        if(k > 1) cat("\n")
         cat("Grouping level:",names(VarCov)[k],"\n")
         VarCov.k <- VarCov[[k]]
         VarCov.k[] <- format(VarCov.k, digits=digits)
@@ -652,6 +703,7 @@ print.summary.mmclogit <-
     VarCov <- x$VarCov
     se_VarCov <- x$se_VarCov
     for(k in 1:length(VarCov)){
+        if(k > 1) cat("\n")
         cat("Grouping level:",names(VarCov)[k],"\n")
         VarCov.k <- VarCov[[k]]
         VarCov.k[] <- format(VarCov.k, digits=digits)
@@ -706,8 +758,11 @@ predict.mmclogit <- function(object, newdata=NULL,type=c("link","response"),se.f
                              conditional=TRUE, ...){
     
     type <- match.arg(type)
-    lhs <- object$formula[[2]]
-    rhs <- object$formula[-2]
+    fo <- object$formula
+    if(as.character(fo[[2]][[1]])=="|")
+        fo[[2]][[1]] <- as.name("cbind")
+    lhs <- fo[[2]]
+    rhs <- fo[-2]
     random <- object$random  
     if(length(lhs)==3)
         sets <- lhs[[3]]
@@ -716,65 +771,87 @@ predict.mmclogit <- function(object, newdata=NULL,type=c("link","response"),se.f
         mf <- object$model
         sets <- mf[[1]][,2]
         na.act <- object$na.action
+        rmf <- mf
     }
     else{
-        vars <- unique(c(all.vars(sets),all.vars(rhs),all.vars(object$call$random),all.vars(object$call$weights)))
-        fo <- paste("~",paste(vars,collapse=" + "))
-        fo <- as.formula(fo,env=parent.frame())
-        mf <- model.frame(fo,data=newdata,na.action=na.exclude)
-        sets <- mf[[sets]]
+        mf <- model.frame(rhs,data=newdata,na.action=na.exclude)
+        rnd <- object$random
+        for(i in seq_along(rnd)){
+            rf_i <- random2formula(rnd[[i]])
+            if(i == 1)
+                rfo <- rf_i
+            else
+                rfo <- c_formulae(rfo,rf_i)
+        }
+        rmf <- model.frame(rfo,data=newdata,na.action=na.exclude)
+        sets <- eval(sets,newdata)
         na.act <- attr(mf,"na.action")
     }
     X <- model.matrix(rhs,mf,
                       contrasts.arg=object$contrasts,
                       xlev=object$xlevels
                       )
-    
     cf <- coef(object)
     X <- X[,names(cf), drop=FALSE]
     eta <- c(X %*% cf)
 
     if(object$method=="PQL" && conditional){
         
-        rf <- random$formula
-        rt <- terms(rf)
-        groups <- random$groups
-        all.groups <- object$groups
+        rf <- lapply(random,"[[","formula")
+        rt <- lapply(rf,terms)
+        suppressWarnings(Z <- lapply(rt,model.matrix,rmf,
+                                     contrasts.arg=object$contrasts,
+                                     xlev=object$xlevels))
+        d <- sapply(Z,ncol)
+        nn <- length(Z)
 
-        Z <- model.matrix(rt,mf,
-                      contrasts.arg=object$contrasts,
-                      xlev=object$xlevels
-                      )
-        groups <- random$groups
         orig.groups <- object$groups
         olevels <- lapply(orig.groups,levels)
-        groups <- mf[groups]
-        groups <- Map(factor,x=groups,levels=olevels)
-        nlev <- length(groups)
-        if(nlev > 1){
-            for(i in 2:nlev){
-                groups[[i]] <- interaction(groups[c(i-1,i)])
+        randstruct <- lapply(1:nn,function(k){
+            group.labels <- random[[k]]$groups
+            groups <- mf[group.labels]
+            groups <- lapply(groups,as.factor)
+            nlev <- length(groups)
+            if(nlev > 1){
+                for(i in 2:nlev){
+                    groups[[i]] <- interaction(groups[c(i-1,i)])
+                    group.labels[i] <- paste(group.labels[i-1],group.labels[i],sep=":")
+                }
             }
-        }
-        Z <- lapply(groups,mkZ,
-                    rX=Z)
+            olevels <- olevels[group.labels]
+            groups <- Map(factor,x=groups,levels=olevels)
+            
+            VarCov.names.k <- rep(list(colnames(Z[[k]])),nlev)
+            Z_k <- lapply(groups,mkZ,rX=Z[[k]])
+            d <- rep(d[k],nlev)
+            names(groups) <- group.labels
+            list(Z_k,groups,d,VarCov.names.k)
+        })
+        Z <- lapply(randstruct,`[[`,1)
+        groups <- lapply(randstruct,`[[`,2)
+        Z <- unlist(Z,recursive=FALSE)
+        d <- lapply(randstruct,`[[`,3)
+        groups <- unlist(groups,recursive=FALSE)
+        d <- unlist(d)
+        
         Z <- blockMatrix(Z)
+        b <- object$random.effects
+        nlev <- length(Z)
 
-        random.effects <- object$random.effects
         for(k in 1:nlev)
-            eta <- eta +  as.vector(Z[[k]]%*%random.effects[[k]])
+            eta <- eta +  as.vector(Z[[k]]%*%b[[k]])
     }
     
     nvar <- ncol(X)
     nobs <- nrow(X)
     
-    if(se.fit || type=="response"){
+    if(type=="response" || object$method=="PQL" && conditional ){
         j <- match(sets,unique(sets))
         exp.eta <- exp(eta)
         sum.exp.eta <- rowsum(exp.eta,j)
         p <- exp.eta/sum.exp.eta[j]
     }
-    if(se.fit){
+    if(se.fit && (type=="response" || object$method=="PQL" && conditional)){
         nsets <- j[length(j)]
         W <- Matrix(0,nrow=nobs,ncol=nsets)
         i <- 1:nobs
@@ -796,12 +873,12 @@ predict.mmclogit <- function(object, newdata=NULL,type=c("link","response"),se.f
                 var.p <- Map(`*`,WXZ,var.p)
                 var.p <- lapply(var.p,rowSums)
                 var.p <- Reduce(`+`,var.p)
+                se.p <- sqrt(var.p)
             }
             else {
                 vcov.coef <- vcov(object)
-                var.p <- rowSums(WX*(WX%*%vcov.coef))
+                se.p <- sqrt(rowSums(WX*(WX%*%vcov.coef)))
             }
-            se.p <- sqrt(var.p)
             if(is.null(na.act))
                 list(fit=p,se.fit=se.p) 
             else

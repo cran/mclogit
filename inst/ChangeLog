@@ -1,3 +1,43 @@
+2022-04-10:
+  - Fix handling of singular initial covariance matrices in PQLMQL_innerFit
+  - Issue a warning if models with random effects are compared using anova
+  - Fix predict methods for mmclogit models
+  - Handle DOIs in documentation as required by new guidelines
+
+2022-01-16:
+  - Fix prediction with complicated terms in the model
+  - Add some more demos
+
+2021-08-13:
+  - predict.mmclogit: create W-Matrix only when really needed
+
+2021-07-13:
+  - Include variance parameters in the computation of degrees of freedom
+
+2021-06-03:
+  - Be less zealous about group-level covariates constant in some choice sets.
+
+2021-05-30:
+  - Added support for vertical-bar syntax for responses of conditional
+    logit models.
+
+2021-05-27:
+  - Added support for non-nested random effects.
+
+2021-05-25:
+  - Fixed serious bug in the handling of multilevel random effects models.
+  - Detect some misspecified models with too many groups.
+
+2021-04-17:
+  - Merged pull request by Russel V. Lenth that adds support for "emmeans".
+
+2021-04-04:
+  - Apply patch suggested by Ilya Yalchyk to improve formula argument
+    of 'mclogit()' and 'mblogit()'.
+
+2021-03-19:
+  - Last fixes for CRAN
+
 2021-03-18:
   - Improved support 'mtable()' for multinomial logit models with random effects.
 

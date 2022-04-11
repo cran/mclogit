@@ -2,6 +2,27 @@
 \title{\emph{mclogit} News}
 \encoding{UTF-8}
 
+\section{Version 0.9}{
+  \subsection{NEW FEATURES}{
+    \itemize{
+      \item It is now possible to estimate models with non-nested
+      (e.g. crossed) random effects. Such models can be specified
+      by providing a list of formulas as \code{random=} argument to the
+      \code{mclogit()} or \code{mblogit()} function.
+      \item The left-hand side of conditional logit models can now
+      more conveniently specified using the vertical-bar (\code{|})
+      operator.
+    }
+  }
+  \subsection{BUGFIXES}{
+    \itemize{
+      \item Singular initial covariance matrices no longer cause errors.
+      \item A warning about unreliable results is issued if
+      \code{anova()} is applied to models with random effects.
+    }
+  }
+}
+
 \section{Version 0.8}{
   \subsection{NEW FEATURES}{
     \itemize{
@@ -33,6 +54,8 @@
     \itemize{
       \item \code{summary()} shows the number of groups per random
       effects level (if present).
+      \item \code{mclogit()} and \code{mblogit()} with random effects now work with
+      \code{formula=}-argumements passed in variables.
     }
   }
 }
