@@ -16,6 +16,7 @@ mblogit(
   formula,
   data = parent.frame(),
   random = NULL,
+  catCov = c("free", "diagonal", "single"),
   subset,
   weights = NULL,
   na.action = getOption("na.action"),
@@ -26,6 +27,7 @@ mblogit(
   method = NULL,
   estimator = c("ML", "REML"),
   dispersion = FALSE,
+  start = NULL,
   from.table = FALSE,
   groups = NULL,
   control = if (length(random)) mmclogit.control(...) else mclogit.control(...),
@@ -44,6 +46,12 @@ in the model.  If not found in \code{data}, the variables are taken from
 
 \item{random}{an optional formula or list of formulas that specify the
 random-effects structure or NULL.}
+
+\item{catCov}{a character string that specifies optional restrictions
+on the covariances of random effects between the logit equations.
+"free" means no restrictions, "diagonal" means that random effects
+pertinent to different categories are uncorrelated, while "single" means
+that the random effect variances pertinent to all categories are identical.}
 
 \item{subset}{an optional vector specifying a subset of observations to be
 used in the fitting process.}
@@ -78,6 +86,15 @@ estimator is to be used/approximated.}
 \item{dispersion}{a logical value or a character string; whether and how a
 dispersion parameter should be estimated. For details see
 \code{\link{dispersion}}.}
+
+\item{start}{an optional matrix of starting values (with as many rows
+as logit equations). If the model has random effects, the matrix
+should have a "VarCov" attribute wtih starting values for
+the random effects (co-)variances. If the random effects model
+is estimated with the "PQL" method, the starting values matrix
+should also have a "random.effects" attribute, which should have
+the same structure as the "random.effects" component of an object
+returned by \code{mblogit()}.}
 
 \item{from.table}{a logical value; do the data represent a contingency table,
 e.g. were created by applying \code{as.data.frame()} a the result of

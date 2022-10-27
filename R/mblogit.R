@@ -12,6 +12,11 @@
 #'     \code{glm} is called.
 #' @param random an optional formula or list of formulas that specify the
 #'     random-effects structure or NULL.
+#' @param catCov a character string that specifies optional restrictions
+#'     on the covariances of random effects between the logit equations.
+#'     "free" means no restrictions, "diagonal" means that random effects
+#'     pertinent to different categories are uncorrelated, while "single" means
+#'     that the random effect variances pertinent to all categories are identical.
 #' @param subset an optional vector specifying a subset of observations to be
 #'     used in the fitting process.
 #' @param weights an optional vector of weights to be used in the fitting
@@ -37,6 +42,14 @@
 #' @param dispersion a logical value or a character string; whether and how a
 #'     dispersion parameter should be estimated. For details see
 #'     \code{\link{dispersion}}.
+#' @param  start an optional matrix of starting values (with as many rows
+#'     as logit equations). If the model has random effects, the matrix
+#'     should have a "VarCov" attribute wtih starting values for
+#'     the random effects (co-)variances. If the random effects model
+#'     is estimated with the "PQL" method, the starting values matrix
+#'     should also have a "random.effects" attribute, which should have
+#'     the same structure as the "random.effects" component of an object
+#'     returned by \code{mblogit()}.
 #' @param from.table a logical value; do the data represent a contingency table,
 #'     e.g. were created by applying \code{as.data.frame()} a the result of
 #'     \code{table()} or \code{xtabs()}.  This relevant only if the response is
@@ -89,6 +102,7 @@
 mblogit <- function(formula,
                     data=parent.frame(),
                     random=NULL,
+                    catCov=c("free","diagonal","single"),
                     subset,
                     weights=NULL,
                     na.action = getOption("na.action"),
@@ -97,6 +111,7 @@ mblogit <- function(formula,
                     method = NULL,
                     estimator=c("ML","REML"),
                     dispersion = FALSE,
+                    start = NULL,
                     from.table = FALSE,
                     groups = NULL,
                     control=if(length(random))
@@ -140,6 +155,14 @@ mblogit <- function(formula,
         mff <- eval(mff, parent.frame())
         mf$formula <- update(mff,rf)
         mf <- eval(mf, parent.frame())
+        check.names(control,
+                    "epsilon","maxit",
+                    "trace","trace.inner",
+                    "avoid.increase",
+                    "break.on.increase",
+                    "break.on.infinite",
+                    "break.on.negative")
+        catCov <- match.arg(catCov)
     }
     else if(length(groups)){
         mf0 <- eval(mf, parent.frame())
@@ -155,10 +178,20 @@ mblogit <- function(formula,
         mff <- eval(mff, parent.frame())
         mf$formula <- update(mff,gf)
         mf <- eval(mf, parent.frame())
+        check.names(control,
+                    "epsilon","maxit",
+                    "trace","trace.inner",
+                    "avoid.increase",
+                    "break.on.increase",
+                    "break.on.infinite",
+                    "break.on.negative")
     }
     else {
         mf <- eval(mf, parent.frame())
         mt <- attr(mf,"terms")
+        check.names(control,
+                    "epsilon","maxit",
+                    "trace")
     }
     
     na.action <- attr(mf,"na.action")
@@ -179,6 +212,8 @@ mblogit <- function(formula,
 
     if(is.factor(Y)){
         response.type <- "factor"
+        n.categs <- nlevels(Y)
+        n.obs <- length(Y)
         if(from.table){
             # Create an appropriate response matrix if data
             # come from a table of frequencies
@@ -228,6 +263,8 @@ mblogit <- function(formula,
         }
     } else if(is.matrix(Y)){
         response.type <- "matrix"
+        n.categs <- ncol(Y)
+        n.obs <- nrow(Y)
         
         D <- diag(ncol(Y))[,-1, drop=FALSE]
         if(length(colnames(Y))){
@@ -252,6 +289,22 @@ mblogit <- function(formula,
         Y <- as.vector(t(Y))
     }
     else stop("response must either be a factor or a matrix of counts or dummies")
+
+    start.VarCov <- NULL
+    start.randeff <- NULL
+    if(length(start)){
+        start.VarCov <- attr(start,"VarCov")
+        start.randeff <- attr(start,"random.effects")
+        if(nrow(start)!=ncol(D))
+            stop("Rows of 'start' argument do not match dependent variable.")
+        start.names <- colnames(start)
+        X.names <- colnames(X)
+        if(length(start.names))
+            start <- start[,X.names,drop=FALSE]
+        if(ncol(start)!=ncol(X))
+             stop("Columns of 'start' argument do not match independent variables.")
+        start <- as.vector(start)
+    }
     
     s <- rep(seq_len(nrow(X)),each=nrow(D))
     
@@ -264,6 +317,7 @@ mblogit <- function(formula,
     if(!length(random))
         fit <- mclogit.fit(y=Y,s=s,w=weights,X=XD,
                            dispersion=dispersion,
+                           start=start,
                            control=control)
     else { ## random effects
 
@@ -278,48 +332,142 @@ mblogit <- function(formula,
         suppressWarnings(Z <- lapply(rt,model.matrix,mf,
                                      contrasts.arg=contrasts))
         # Use suppressWarnings() to stop complaining about unused contasts
-        
-        ZD <- lapply(Z,`%x%`,D)
-        d <- sapply(ZD,ncol)
 
-        nn <- length(ZD)
-        for(k in 1:nn){
-            colnames(ZD[[k]]) <- paste0(rep(colnames(D),ncol(Z[[k]])),
-                                        "~",
-                                        rep(colnames(Z[[k]]),each=ncol(D)))
-            colnames(ZD[[k]]) <- gsub("(Intercept)","1",colnames(ZD[[k]]),fixed=TRUE)
+        if(catCov == "free"){
+            ZD <- lapply(Z,`%x%`,D)
+            d <- sapply(ZD,ncol)
+
+            nn <- length(ZD)
+            for(k in 1:nn){
+                colnames(ZD[[k]]) <- paste0(rep(colnames(D),ncol(Z[[k]])),
+                                            "~",
+                                            rep(colnames(Z[[k]]),each=ncol(D)))
+                colnames(ZD[[k]]) <- gsub("(Intercept)","1",colnames(ZD[[k]]),fixed=TRUE)
+            }
+
+            randstruct <- lapply(1:nn,function(k){
+                group.labels <- random[[k]]$groups
+                groups <- mf[group.labels]
+                groups <- lapply(groups,as.factor)
+                nlev <- length(groups)
+                if(nlev > 1){
+                    for(i in 2:nlev){
+                        groups[[i]] <- interaction(groups[c(i-1,i)])
+                        group.labels[i] <- paste(group.labels[i-1],group.labels[i],sep=":")
+                    }
+                }
+                groups <- lapply(groups,rep,each=nrow(D))
+                
+                VarCov.names.k <- rep(list(colnames(ZD[[k]])),nlev)
+                ZD_k <- lapply(groups,mkZ,rX=ZD[[k]])
+                d <- rep(d[k],nlev)
+                names(groups) <- group.labels
+                list(ZD_k,groups,d,VarCov.names.k)
+            })
+            ZD <- lapply(randstruct,`[[`,1)
+            groups <- lapply(randstruct,`[[`,2)
+            d <- lapply(randstruct,`[[`,3)
+            VarCov.names <- lapply(randstruct,`[[`,4)
+            ZD <- unlist(ZD,recursive=FALSE)
+            groups <- unlist(groups,recursive=FALSE)
+            VarCov.names <- unlist(VarCov.names,recursive=FALSE)
+            d <- unlist(d)
+            ZD <- blockMatrix(ZD,ncol=length(ZD))
+        } else if(catCov =="single"){
+            cc <- rep(1:n.categs,n.obs)
+            stopifnot(length(Y)==length(cc))
+            d <- sapply(Z,ncol)
+
+            nn <- length(Z)
+
+            for(k in 1:nn){
+                colnames(Z[[k]]) <- paste0("~",colnames(Z[[k]]))
+                colnames(Z[[k]]) <- gsub("(Intercept)","1",colnames(Z[[k]]),fixed=TRUE)
+            }
+
+            randstruct <- lapply(1:nn,function(k){
+                group.labels <- random[[k]]$groups
+                groups <- mf[group.labels]
+                groups <- lapply(groups,as.factor)
+                nlev <- length(groups)
+                groups[[1]] <- interaction(cc,groups[[1]])
+                if(nlev > 1){
+                    for(i in 2:nlev){
+                        groups[[i]] <- interaction(groups[c(i-1,i)])
+                        group.labels[i] <- paste(group.labels[i-1],group.labels[i],sep=":")
+                    }
+                }
+                
+                VarCov.names.k <- rep(list(colnames(Z[[k]])),nlev)
+                ZD_k <- lapply(groups,mkZ,rX=Z[[k]])
+                d <- rep(d[k],nlev)
+                names(groups) <- group.labels
+                list(ZD_k,groups,d,VarCov.names.k)
+            })
+            ZD <- lapply(randstruct,`[[`,1)
+            groups <- lapply(randstruct,`[[`,2)
+            d <- lapply(randstruct,`[[`,3)
+            VarCov.names <- lapply(randstruct,`[[`,4)
+            ZD <- unlist(ZD,recursive=FALSE)
+            groups <- unlist(groups,recursive=FALSE)
+            VarCov.names <- unlist(VarCov.names,recursive=FALSE)
+            d <- unlist(d)
+            ZD <- blockMatrix(ZD,ncol=length(ZD))
+        } else { # catCov == "diagonal"
+            categs <- 1:n.categs
+            cc <- rep(categs,n.obs)
+            stopifnot(length(Y)==length(cc))
+            randstruct <- list()
+            for(categ in categs){
+                u <- as.integer(categ==categs)
+
+                ZD <- lapply(Z,`%x%`,u)
+                d <- sapply(ZD,ncol)
+
+                nn <- length(ZD)
+
+                for(k in 1:nn){
+                    colnames(ZD[[k]]) <- paste0(rownames(D)[categ],"~",colnames(Z[[k]]))
+                    colnames(ZD[[k]]) <- gsub("(Intercept)","1",colnames(ZD[[k]]),fixed=TRUE)
+                }
+
+                randstruct_c <- lapply(1:nn,function(k){
+                    group.labels <- random[[k]]$groups
+                    groups <- mf[group.labels]
+                    groups <- lapply(groups,as.factor)
+                    nlev <- length(groups)
+                    if(nlev > 1){
+                        for(i in 2:nlev){
+                            groups[[i]] <- interaction(groups[c(i-1,i)])
+                            group.labels[i] <- paste(group.labels[i-1],group.labels[i],sep=":")
+                        }
+                    }
+                    groups <- lapply(groups,rep,each=nrow(D))
+                    
+                    VarCov.names.k <- rep(list(colnames(ZD[[k]])),nlev)
+                    ZD_k <- lapply(groups,mkZ,rX=ZD[[k]])
+                    d <- rep(d[k],nlev)
+                    names(groups) <- group.labels
+                    list(ZD_k,groups,d,VarCov.names.k)
+                })
+                randstruct <- c(randstruct,randstruct_c)
+            }
+            ZD <- lapply(randstruct,`[[`,1)
+            groups <- lapply(randstruct,`[[`,2)
+            d <- lapply(randstruct,`[[`,3)
+            VarCov.names <- lapply(randstruct,`[[`,4)
+            ZD <- unlist(ZD,recursive=FALSE)
+            groups <- unlist(groups,recursive=FALSE)
+            VarCov.names <- unlist(VarCov.names,recursive=FALSE)
+            d <- unlist(d)
+            ZD <- blockMatrix(ZD,ncol=length(ZD))
         }
 
-        randstruct <- lapply(1:nn,function(k){
-            group.labels <- random[[k]]$groups
-            groups <- mf[group.labels]
-            groups <- lapply(groups,as.factor)
-            nlev <- length(groups)
-            if(nlev > 1){
-                for(i in 2:nlev){
-                    groups[[i]] <- interaction(groups[c(i-1,i)])
-                    group.labels[i] <- paste(group.labels[i-1],group.labels[i],sep=":")
-                }
-            }
-            groups <- lapply(groups,rep,each=nrow(D))
-            
-            VarCov.names.k <- rep(list(colnames(ZD[[k]])),nlev)
-            ZD_k <- lapply(groups,mkZ,rX=ZD[[k]])
-            d <- rep(d[k],nlev)
-            names(groups) <- group.labels
-            list(ZD_k,groups,d,VarCov.names.k)
-        })
-        ZD <- lapply(randstruct,`[[`,1)
-        groups <- lapply(randstruct,`[[`,2)
-        d <- lapply(randstruct,`[[`,3)
-        VarCov.names <- lapply(randstruct,`[[`,4)
-        ZD <- unlist(ZD,recursive=FALSE)
-        groups <- unlist(groups,recursive=FALSE)
-        VarCov.names <- unlist(VarCov.names,recursive=FALSE)
-        d <- unlist(d)
-        ZD <- blockMatrix(ZD,ncol=length(ZD))
         fit <- mmclogit.fitPQLMQL(y=Y,s=s,w=weights,
                                   X=XD,Z=ZD,d=d,
+                                  start=start,
+                                  start.Phi=start.VarCov,
+                                  start.b=start.randeff,
                                   method=method,
                                   estimator=estimator,
                                   control=control,
@@ -354,6 +502,7 @@ mblogit <- function(formula,
                       contrasts = contrasts,
                       xlevels = xlevels,
                       na.action = na.action,
+                      start = start,
                       prior.weights=prior.weights,
                       weights=weights,
                       model=mf,
@@ -372,7 +521,7 @@ mblogit <- function(formula,
 
 
 print.mblogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
-  cat("\nCall: ", deparse(x$call), "\n\n")
+  cat("\nCall: ",paste(deparse(x$call), sep="\n", collapse="\n"), "\n\n", sep="")
   
   D <- x$D
   
@@ -445,9 +594,8 @@ print.summary.mblogit <-
     if(x$dispersion != 1)
         cat("\nDispersion: ",x$dispersion," on ",x$df.residual," degrees of freedom")
 
-    cat("\nNull Deviance:    ",   format(signif(x$null.deviance, digits)),
-        "\nResidual Deviance:", format(signif(x$deviance, digits)),
-        "\nNumber of Fisher Scoring iterations: ", x$iter,
+    cat("\nApproximate residual Deviance:", format(signif(x$deviance, digits)),
+        "\nNumber of Fisher scoring iterations: ", x$iter,
         "\nNumber of observations: ",x$N,
         "\n")
     correl <- x$correlation
@@ -679,9 +827,8 @@ print.summary.mmblogit <-
         writeLines(VarCov.k)
     }
 
-    cat("\nNull Deviance:    ", format(signif(x$null.deviance, digits)),
-        "\nResidual Deviance:", format(signif(x$deviance, digits)),
-        "\nNumber of Fisher Scoring iterations: ", x$iter)
+    cat("\nApproximate residual deviance:", format(signif(x$deviance, digits)),
+        "\nNumber of Fisher scoring iterations: ", x$iter)
 
     cat("\nNumber of observations")
     for(i in seq_along(x$groups)){

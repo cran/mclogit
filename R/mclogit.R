@@ -111,10 +111,20 @@ mclogit <- function(
         mff <- eval(mff, parent.frame())
         mf$formula <- update(mff,rf)
         mf <- eval(mf, parent.frame())
+        check.names(control,
+                    "epsilon","maxit",
+                    "trace","trace.inner",
+                    "avoid.increase",
+                    "break.on.increase",
+                    "break.on.infinite",
+                    "break.on.negative")
     }
     else {
         mf <- eval(mf, parent.frame())
         mt <- attr(mf,"terms")
+        check.names(control,
+                    "epsilon","maxit",
+                    "trace")
     }
     
     na.action <- attr(mf,"na.action")
@@ -155,17 +165,29 @@ mclogit <- function(
                 " from model due to insufficient within-choice set variance")
         X <- X[,!const,drop=FALSE]
     }
-    if(!length(start)){
-      drop.coefs <- check.mclogit.drop.coefs(Y,sets,weights,X,
-                                             offset = offset)
-      if(any(drop.coefs)){
+    drop.coefs <- check.mclogit.drop.coefs(Y,sets,weights,X,
+                                           offset = offset)
+    if(any(drop.coefs)){
         warning("removing ",paste(colnames(X)[drop.coefs],collapse=",")," from model")
         X <- X[,!drop.coefs,drop=FALSE]
-      }
     }
     if(ncol(X)<1)
         stop("No predictor variable remains in model")
     
+    start.VarCov <- NULL
+    start.randeff <- NULL
+    if(length(start)){
+        start.VarCov <- attr(start,"VarCov")
+        start.randeff <- attr(start,"random.effects")
+        start.names <- names(start)
+        X.names <- colnames(X)
+        if(length(start.names))
+            start <- start[X.names]
+        if(length(start)!=ncol(X))
+            stop("Columns of 'start' argument do not match independent variables.")
+    }
+
+
     if(!length(random)){
         fit <- mclogit.fit(y=Y,s=sets,w=weights,X=X,
                        dispersion=dispersion,
@@ -235,6 +257,9 @@ mclogit <- function(
         Z <- blockMatrix(Z,ncol=length(Z))
         fit <- mmclogit.fitPQLMQL(Y,sets,weights,X,Z,
                                   d=d,
+                                  start=start,
+                                  start.Phi=start.VarCov,
+                                  start.b=start.randeff,
                                   method = method,
                                   estimator=estimator,
                                   control=control,
@@ -321,7 +346,7 @@ checkRandomFormula <- function(x){
 
 
 print.mclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
-    cat(paste(deparse(x$call), sep="\n", collapse="\n"), "\n\n", sep="")
+    cat("\nCall: ",paste(deparse(x$call), sep="\n", collapse="\n"), "\n\n", sep="")
     if(length(coef(x))) {
         cat("Coefficients")
         if(is.character(co <- x$contrasts))
@@ -344,7 +369,8 @@ print.mclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
 vcov.mclogit <- function(object,...){
     phi <- object$phi
     if(!length(phi)) phi <- 1
-    return(object$covmat * phi)
+    cov.unscaled <- safeInverse(object$information.matrix)
+    return(cov.unscaled * phi)
 }
 
 weights.mclogit <- function(object,...){
@@ -364,7 +390,7 @@ summary.mclogit <- function(object,dispersion=NULL,correlation = FALSE, symbolic
     if(is.null(dispersion))
         dispersion <- object$phi
     
-    covmat.scaled <- object$covmat * dispersion
+    covmat.scaled <- vcov(object)
     
     var.cf <- diag(covmat.scaled)
     s.err <- sqrt(var.cf)
@@ -622,8 +648,7 @@ print.mmclogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
         print.default(VarCov.k, print.gap = 2, quote = FALSE)
     }
     
-    cat("\nNull Deviance:    ",   format(signif(x$null.deviance, digits)),
-        "\nResidual Deviance:", format(signif(x$deviance, digits)))
+    cat("\nApproximate residual deviance:", format(signif(x$deviance, digits)))
     if(!x$converged) cat("\n\nNote: Algorithm did not converge.\n")
     if(nchar(mess <- naprint(x$na.action))) cat("  (",mess, ")\n", sep="")
     else cat("\n")
@@ -644,7 +669,7 @@ summary.mmclogit <- function(object,dispersion=NULL,correlation = FALSE, symboli
 
     coef <- object$coefficients
     info.coef <- object$info.coef
-    vcov.cf <- solve2(info.coef)
+    vcov.cf <- safeInverse(info.coef)
     var.cf <- diag(vcov.cf)
     s.err <- sqrt(var.cf)
     zvalue <- coef/s.err
@@ -720,9 +745,8 @@ print.summary.mmclogit <-
         writeLines(VarCov.k)
     }
 
-    cat("\nNull Deviance:    ", format(signif(x$null.deviance, digits)),
-        "\nResidual Deviance:", format(signif(x$deviance, digits)),
-        "\nNumber of Fisher Scoring iterations: ", x$iter)
+    cat("\nApproximate residual deviance:", format(signif(x$deviance, digits)),
+        "\nNumber of Fisher scoring iterations: ", x$iter)
 
     cat("\nNumber of observations")
     for(i in seq_along(x$groups)){
@@ -1116,4 +1140,17 @@ solve2 <- function(x){
     if(inherits(ix,"try-error"))
         return(eigen.solve(x))
     else return(ix)
+}
+
+check.names <- function(x,...){
+    nms <- c(...)
+    res <- nms %in% names(x)
+    if(!all(res)){
+        mis <- nms[!(nms %in% names(x))]
+        mis <- paste(dQuote(mis),collapse=", ")
+        msg_tmpl <- "Elements with names %s are missing" 
+        msg <- paste(strwrap(sprintf(msg_tmpl,mis),width=80),
+                     collapse="\n")
+        stop(msg)
+    }
 }
