@@ -12,16 +12,18 @@ quickInteraction <- function(by){
       f <- f*l + y - 1
       uf <- unique(na.omit(f))
       f <- match(f,uf,NA)
-      uf <- seq(length(uf))
+      n <- length(uf)
+      uf <- seq.int(n)
     }
   }
   else {
     by <- as.numeric(by)
     uf <- unique(na.omit(by))
     f <- match(by,uf,NA)
-    uf <- seq(length(uf))
+    n <- length(uf)
+    uf <- seq.int(n)
   }
-  return(structure(f,unique=uf))
+  return(structure(f,unique=uf,n=n))
 }
 
 matConstInSets <- function(X,sets){
@@ -69,6 +71,7 @@ mclogit <- function(
                 estimator=c("ML","REML"),
                 dispersion = FALSE,
                 start=NULL,
+                groups = NULL,
                 control=if(length(random))
                             mmclogit.control(...)
                         else mclogit.control(...),
@@ -118,6 +121,28 @@ mclogit <- function(
                     "break.on.increase",
                     "break.on.infinite",
                     "break.on.negative")
+    }
+    else if(length(groups)){
+        mf0 <- eval(mf, parent.frame())
+        mt <- attr(mf0,"terms")
+        gf <- paste(c(".~.",all.vars(groups)),collapse="+")
+        gf <- as.formula(gf)
+        if (typeof(mf$formula) == "symbol") {
+          mff <- formula
+        }
+        else {
+          mff <- structure(mf$formula,class="formula")
+        }
+        mff <- eval(mff, parent.frame())
+        mf$formula <- update(mff,gf)
+        mf <- eval(mf, parent.frame())
+        groups <- all.vars(groups)
+        groups <- mf[groups]
+        # if(length(groups) > 1) stop("Multiple groups not supported")
+        check.names(control,
+                    "epsilon","maxit",
+                    "trace"
+                    )
     }
     else {
         mf <- eval(mf, parent.frame())
@@ -194,7 +219,6 @@ mclogit <- function(
                        control=control,
                        start = start,
                        offset = offset)
-        groups <- NULL
     }
     else { ## random effects
         
@@ -506,6 +530,7 @@ predict.mclogit <- function(object, newdata=NULL,type=c("link","response"),se.fi
         m <- model.frame(fo,data=object$data)
         set <- m[[1]][,2]
         na.act <- object$na.action
+        offset <- object$offset
     }
     else{
         lhs <- lhs[[3]]
@@ -513,6 +538,16 @@ predict.mclogit <- function(object, newdata=NULL,type=c("link","response"),se.fi
         m <- model.frame(fo,data=newdata)
         set <- m[[1]]
         na.act <- attr(m,"na.action")
+        offset <- model.offset(m)
+        offset_in_call <- object$call$offset
+        if(!is.null(offset_in_call)){
+            offset_in_call <- eval(offset_in_call,newdata,
+                                   environment(terms(object)))
+            if(length(offset))
+                offset <- offset + offset_in_call
+            else
+                offset <- offset_in_call
+        }
     }
     X <- model.matrix(rhs,m,
                       contasts.arg=object$contrasts,
@@ -523,6 +558,8 @@ predict.mclogit <- function(object, newdata=NULL,type=c("link","response"),se.fi
     X <- X[,names(cf), drop=FALSE]
     
     eta <- c(X %*% cf)
+    if(!is.null(offset)) eta <- eta + offset
+
     if(se.fit){
         V <- vcov(object)
         stopifnot(ncol(X)==ncol(V))
@@ -961,29 +998,16 @@ mkZ <- function(groups,rX){
     jk <- rep((j-1)*p,p)+rep(k,each=n)
     i.jk <- cbind(i,jk)
 
-    Z[i.jk] <- rX
-    Z
-}
-
-mkZ2 <- function(all.groups,
-                groups,
-                rX){
-    n <- length(groups)
-    ug <- unique(all.groups)
-    m <- length(ug)
-    p <- ncol(rX)
-    
-    Z <- Matrix(0,nrow=n,ncol=m*p)
-
-    i <- 1:n
-    k <- 1:p
-    j <- groups
-    
-    i <- rep(i,p)
-    jk <- rep((j-1)*p,p)+rep(k,each=n)
-    i.jk <- cbind(i,jk)
+    lev_groups <- levels(groups)
+    if(is.null(lev_groups))
+        lev_groups <- unique(groups)
 
     Z[i.jk] <- rX
+    if(ncol(rX) > 1)
+        cn <- as.vector(outer(colnames(rX),lev_groups,paste,sep="|"))
+    else
+        cn <- lev_groups
+    colnames(Z) <- cn
     Z
 }
 
@@ -1065,12 +1089,18 @@ fuseCols <- function(x,i) do.call(cbind,x[i,])
 
 format_Mat <- function(x,title="",rownames=NULL){
     if(length(rownames))
-        rn <- format(c("",rownames))
+        rn <- c("",rownames)
     else 
-        rn <- format(c("",rownames(x)))
+        rn <- c("",rownames(x))
     x <- format(x)
+    if(length(colnames(x))){
+        x <- rbind(colnames(x),x)
+        x <- format(x,justify="centre")
+        rn <- c("",rn)
+    }
     x <- apply(x,1,paste,collapse=" ")
     x <- format(c(title,x))
+    rn <- format(rn,justify="right")
     paste(rn,x)
 }
 
@@ -1153,4 +1183,58 @@ check.names <- function(x,...){
                      collapse="\n")
         stop(msg)
     }
+}
+
+ranef.mmclogit <- function(object,...){
+    re <- object$random.effects
+    g <- object$groups
+    names(re) <- names(object$groups)
+    Imat <- object$info.fixed.random
+    Vmat <- solve(Imat)
+    Vmat <- Vmat[-1,-1,drop=FALSE]
+    k <- length(re)
+    res <- lapply(1:k,get_ranef,g,re,Vmat)
+    names(res) <- names(object$groups)
+    structure(res,class=c("ranef.mmclogit","ranef.mer"))
+}
+
+get_ranef <- function(i,g,re,Vmat){
+    g <- g[[i]]
+    re <- re[[i]]
+    Vmat <- Vmat[[i,i]]
+    nms <- rownames(re)
+    m <- nlevels(g)
+    d <- length(re)/m
+    if(d == 1){
+        coefn <- "(Intercept)"
+        colnames(re) <- coefn
+        gg <- nms
+    }
+    else {
+        nms_spl <- strsplit(nms,"|",fixed=TRUE)
+        nms_spl1 <- unlist(lapply(nms_spl,"[",1))
+        nms_spl2 <- unlist(lapply(nms_spl,"[",2))
+        coefn <- unique(nms_spl1)
+        coefn <- gsub("(Const.)","(Intercept)",coefn,fixed=TRUE)
+        gg <- unique(nms_spl2)
+        dim(re) <- c(d,m)
+        dimnames(re) <- list(coefn,gg)
+        re <- t(re)
+    }
+    re <- as.data.frame(re)
+    Vlist <- lapply(1:m,get_dblock,Vmat,d)
+    Varr <- as.matrix(do.call(rbind,Vlist))
+    dim(Varr) <- c(d,m,d)
+    Varr <- aperm(Varr,c(1,3,2))
+    dimnames(Varr) <- list(coefn,coefn,gg)
+
+    structure(as.data.frame(re),
+              postVar=Varr)
+}
+
+get_dblock <- function(i,M,d){
+    from <- (i-1)*d + 1
+    to <- i*d
+    ii <- from:to
+    M[ii,ii]
 }

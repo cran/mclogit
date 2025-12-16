@@ -2,7 +2,7 @@ mclogit.dispersion <- function(y,w,s,pi,coef,method){
     N <- length(w)
     n <- length(unique(s))
     p <- length(coef)
-    res.df <- N - n -p
+    res.df <- N - n - p
     if(method=="Deviance"){
         Dresid <- 2*w*y*(log(y)-log(pi))
         Dresid[w==0 | y== 0] <- 0
@@ -24,7 +24,7 @@ mclogit.dispersion <- function(y,w,s,pi,coef,method){
 
 update_mclogit_dispersion <- function(object,dispersion){
 
-    if(!missing(dispersion)){
+    if(!isFALSE(dispersion)){
         if(is.numeric(dispersion))
             phi <- dispersion
         else {

@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Approximate Inference for Multinomial Logit Models with Random Effects</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+
+
+
+<style type="text/css">
+
+div.csl-bib-body { }
+div.csl-entry {
+clear: both;
+}
+.hanging div.csl-entry {
+margin-left:2em;
+text-indent:-2em;
+}
+div.csl-left-margin {
+min-width:2em;
+float:left;
+}
+div.csl-right-inline {
+margin-left:2em;
+padding-left:1em;
+}
+div.csl-indent {
+margin-left: 2em;
+}
+</style>
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Approximate Inference for Multinomial Logit
+Models with Random Effects</h1>
+
+
+
+<div id="the-problem" class="section level1">
+<h1>The problem</h1>
+<p>A crucial problem for inference about non-linear models with random
+effects is that the likelihood function for such models involves
+integrals for which no analytical solution exists.</p>
+<p>For given values <span class="math inline">\(\boldsymbol{b}\)</span>
+of the random effects the likelihood function of a conditional logit
+model (and therefore also of a baseline-logit model) can be written in
+the form</p>
+<p><span class="math display">\[
+\mathcal{L}_{\text{cpl}}(\boldsymbol{y},\boldsymbol{b})
+=
+\exp\left(\ell_{\text{cpl}}(\boldsymbol{y},\boldsymbol{b})\right)
+=\exp
+\left(
+\ell(\boldsymbol{y}|\boldsymbol{b};\boldsymbol{\alpha})
+-\frac12\ln\det(\boldsymbol{\Sigma})
+-\frac12\boldsymbol{b}&#39;\boldsymbol{\Sigma}^{-1}\boldsymbol{b}
+\right)
+\]</span></p>
+<p>However, this “complete data” likelihood function cannot be used for
+inference, because it depends on the unobserved random effects. To
+arrive at a likelihood function that depends only on observed data, one
+needs to used the following integrated likelihood function:</p>
+<p><span class="math display">\[
+\mathcal{L}_{\text{obs}}(\boldsymbol{y})
+=
+\int
+\exp\left(\ell_{\text{cpl}}(\boldsymbol{y},\boldsymbol{b})\right)
+\partial \boldsymbol{b}
+=
+\int
+\exp
+\left(
+\ell(\boldsymbol{y}|\boldsymbol{b};\boldsymbol{\alpha})
+-\frac12\ln\det(\boldsymbol{\Sigma})
+-\frac12\boldsymbol{b}&#39;\boldsymbol{\Sigma}^{-1}\boldsymbol{b}
+\right)
+\partial \boldsymbol{b}
+\]</span></p>
+<p>In general, this integral cannot be “solved”, i.e. eliminated from
+the formula by analytic means (it is “analytically untractable”).
+Instead, one will compute it either using numeric techniques (e.g. using
+numerical quadrature) or approximate it using analytical techniques.
+Unless there is only a single level of random effects numerical
+quadrature can become computationally be demanding, that is, the
+computation of the (log-)likelihood function and its derivatives can
+take a lot of time even on modern, state-of-the-art computer hardware.
+Yet approximations based on analytical techniques hand may lead to
+biased estimates in particular in samples where the number of
+observations relative to the number of random offects is small, but at
+least they are much easier to compute and sometimes making inference
+possible after all.</p>
+<p>The package “mclogit” supports to kinds of analytical approximations,
+the Laplace approximation and what one may call the Solomon-Cox
+appoximation. Both approximations are based on a quadratic expansion of
+the integrand so that the thus modified integral does have a closed-form
+solution, i.e. is analytically tractable.</p>
+</div>
+<div id="the-laplace-approximation-and-pql" class="section level1">
+<h1>The Laplace approximation and PQL</h1>
+<div id="laplace-approximation" class="section level2">
+<h2>Laplace approximation</h2>
+<p>The (first-order) Laplace approximation is based on the quadratic
+expansion the logarithm of the integrand, the complete-data
+log-likelihood</p>
+<p><span class="math display">\[
+\ell_{\text{cpl}}(\boldsymbol{y},\boldsymbol{b})\approx
+\ell(\boldsymbol{y}|\tilde{\boldsymbol{b}};\boldsymbol{\alpha})
+-
+\frac12
+(\boldsymbol{b}-\tilde{\boldsymbol{b}})&#39;
+\tilde{\boldsymbol{H}}
+(\boldsymbol{b}-\tilde{\boldsymbol{b}})
+-\frac12\ln\det(\boldsymbol{\Sigma})
+-\frac12(\boldsymbol{b}-\tilde{\boldsymbol{b}})&#39;\boldsymbol{\Sigma}^{-1}(\boldsymbol{b}-\tilde{\boldsymbol{b}})
+\]</span></p>
+<p>where <span class="math inline">\(\tilde{\boldsymbol{b}}\)</span> is
+the solution to</p>
+<p><span class="math display">\[
+\frac{\partial\ell_{\text{cpl}}(\boldsymbol{y},\boldsymbol{b})}{\partial\boldsymbol{b}}
+= 0
+\]</span></p>
+<p>and <span class="math inline">\(\tilde{\boldsymbol{H}}=\boldsymbol{H}(\tilde{\boldsymbol{b}})\)</span>
+is the value of the negative Hessian with respect to <span class="math inline">\(\boldsymbol{b}\)</span></p>
+<p><span class="math display">\[
+\boldsymbol{H}(\boldsymbol{b})=-\frac{\partial^2\ell(\boldsymbol{y}|\boldsymbol{b};\boldsymbol{\alpha})}{\partial\boldsymbol{b}\partial\boldsymbol{b}&#39;}
+\]</span></p>
+<p>for <span class="math inline">\(\boldsymbol{b}=\tilde{\boldsymbol{b}}\)</span>.</p>
+<p>Since this quadratic expansion—let us call it <span class="math inline">\(\ell^*_{\text{Lapl}}(\boldsymbol{y},\boldsymbol{b})\)</span>—is
+a (multivariate) quadratic function of <span class="math inline">\(\boldsymbol{b}\)</span>, the integral of its
+exponential does have a closed-form solution (the relevant formula can
+be found in <span class="citation">Harville (1997)</span>).</p>
+<p>For purposes of estimation, the resulting approximate log-likelihood
+is more useful:</p>
+<p><span class="math display">\[
+\ell^*_{\text{Lapl}}
+=
+\ln\int \exp(\ell_{\text{Lapl}}(\boldsymbol{y},\boldsymbol{b}))
+\partial\boldsymbol{b}
+=
+\ell(\boldsymbol{y}|\tilde{\boldsymbol{b}};\boldsymbol{\alpha})
+-
+\frac12\tilde{\boldsymbol{b}}&#39;\boldsymbol{\Sigma}^{-1}\tilde{\boldsymbol{b}}
+-
+\frac12\ln\det(\boldsymbol{\Sigma})
+-
+\frac12\ln\det\left(\tilde{\boldsymbol{H}}+\boldsymbol{\Sigma}^{-1}\right).
+\]</span></p>
+</div>
+<div id="penalized-quasi-likelihood-pql" class="section level2">
+<h2>Penalized quasi-likelihood (PQL)</h2>
+<p>If one disregards the dependence of <span class="math inline">\(\tilde{\boldsymbol{H}}\)</span> on <span class="math inline">\(\boldsymbol{\alpha}\)</span> and <span class="math inline">\(\boldsymbol{b}\)</span>, then <span class="math inline">\(\tilde{\boldsymbol{b}}\)</span> maximizes not only
+<span class="math inline">\(\ell_{\text{cpl}}(\boldsymbol{y},\boldsymbol{b})\)</span>
+but also <span class="math inline">\(\ell^*_{\text{Lapl}}\)</span>. This
+motivates the following IWLS/Fisher scoring equations for <span class="math inline">\(\hat{\boldsymbol{\alpha}}\)</span> and <span class="math inline">\(\tilde{\boldsymbol{b}}\)</span> (see <span class="citation">Breslow and Clayton (1993)</span> and <a href="fitting-mclogit.html">this page</a>):</p>
+<p><span class="math display">\[
+\begin{aligned}
+\begin{bmatrix}
+\boldsymbol{X}&#39;\boldsymbol{W}\boldsymbol{X} &amp;
+\boldsymbol{X}&#39;\boldsymbol{W}\boldsymbol{Z} \\
+\boldsymbol{Z}&#39;\boldsymbol{W}\boldsymbol{X} &amp;
+\boldsymbol{Z}&#39;\boldsymbol{W}\boldsymbol{Z} +
+\boldsymbol{\Sigma}^{-1}\\
+\end{bmatrix}
+\begin{bmatrix}
+\hat{\boldsymbol{\alpha}}\\
+\tilde{\boldsymbol{b}}\\
+\end{bmatrix}
+=
+\begin{bmatrix}
+\boldsymbol{X}&#39;\boldsymbol{W}\boldsymbol{y}^*\\
+\boldsymbol{Z}&#39;\boldsymbol{W}\boldsymbol{y}^*
+\end{bmatrix}
+\end{aligned}
+\]</span></p>
+<p>where</p>
+<p><span class="math display">\[
+\boldsymbol{y}^* =  \boldsymbol{X}\boldsymbol{\alpha} +
+\boldsymbol{Z}\boldsymbol{b} +
+\boldsymbol{W}^{-}(\boldsymbol{y}-\boldsymbol{\pi})
+\]</span></p>
+<p>is the IWLS “working dependend variable” with <span class="math inline">\(\boldsymbol{\alpha}\)</span>, <span class="math inline">\(\boldsymbol{b}\)</span>, <span class="math inline">\(\boldsymbol{W}\)</span>, and <span class="math inline">\(\boldsymbol{\pi}\)</span> computed in an earlier
+iteration.</p>
+<p>Substitutions lead to the equations:</p>
+<p><span class="math display">\[
+(\boldsymbol{X}\boldsymbol{V}^-\boldsymbol{X})\hat{\boldsymbol{\alpha}}
+=
+\boldsymbol{X}\boldsymbol{V}^-\boldsymbol{y}^*
+\]</span></p>
+<p>and</p>
+<p><span class="math display">\[
+(\boldsymbol{Z}&#39;\boldsymbol{W}\boldsymbol{Z} +
+\boldsymbol{\Sigma}^{-1})\boldsymbol{b} =
+\boldsymbol{Z}&#39;\boldsymbol{W}(\boldsymbol{y}^*-\boldsymbol{X}\boldsymbol{\alpha})
+\]</span></p>
+<p>which can be solved to compute <span class="math inline">\(\hat{\boldsymbol{\alpha}}\)</span> and <span class="math inline">\(\tilde{\boldsymbol{b}}\)</span> (for given <span class="math inline">\(\boldsymbol{\Sigma}\)</span>)</p>
+<p>Here</p>
+<p><span class="math display">\[
+\boldsymbol{V} =
+\boldsymbol{W}^-+\boldsymbol{Z}\boldsymbol{\Sigma}\boldsymbol{Z}&#39;
+\]</span></p>
+<p>and</p>
+<p><span class="math display">\[
+\boldsymbol{V}^- = \boldsymbol{W}-
+\boldsymbol{W}\boldsymbol{Z}&#39;\left(\boldsymbol{Z}&#39;\boldsymbol{W}\boldsymbol{Z}+\boldsymbol{\Sigma}^{-1}\right)^{-1}\boldsymbol{Z}\boldsymbol{W}
+\]</span></p>
+<p>Following <span class="citation">Breslow and Clayton (1993)</span>
+the variance parameters in <span class="math inline">\(\boldsymbol{\Sigma}\)</span> are estimated by
+minimizing</p>
+<p><span class="math display">\[
+q_1 =
+\det(\boldsymbol{V})+(\boldsymbol{y}^*-\boldsymbol{X}\boldsymbol{\alpha})\boldsymbol{V}^-(\boldsymbol{y}^*-\boldsymbol{X}\boldsymbol{\alpha})
+\]</span></p>
+<p>or the “REML” variant:</p>
+<p><span class="math display">\[
+q_2 =
+\det(\boldsymbol{V})+(\boldsymbol{y}^*-\boldsymbol{X}\boldsymbol{\alpha})\boldsymbol{V}^-(\boldsymbol{y}^*-\boldsymbol{X}\boldsymbol{\alpha})+\det(\boldsymbol{X}&#39;\boldsymbol{V}^{-}\boldsymbol{X})
+\]</span></p>
+<p>This motivates the following algorithm, which is strongly inspired by
+the <code>glmmPQL()</code> function in Brian Ripley’s <em>R</em> package
+<a href="https://cran.r-project.org/package=MASS">MASS</a> <span class="citation">(Venables and Ripley 2002)</span>:</p>
+<ol style="list-style-type: decimal">
+<li>Create some suitable starting values for <span class="math inline">\(\boldsymbol{\pi}\)</span>, <span class="math inline">\(\boldsymbol{W}\)</span>, and <span class="math inline">\(\boldsymbol{y}^*\)</span></li>
+<li>Construct the “working dependent variable” <span class="math inline">\(\boldsymbol{y}^*\)</span></li>
+<li>Minimize <span class="math inline">\(q_1\)</span> (quasi-ML) or
+<span class="math inline">\(q_2\)</span> (quasi-REML) iteratively (inner
+loop), to obtain an estimate of <span class="math inline">\(\boldsymbol{\Sigma}\)</span></li>
+<li>Obtain <span class="math inline">\(hat{\boldsymbol{\alpha}}\)</span>
+and <span class="math inline">\(\tilde{\boldsymbol{b}}\)</span> based on
+the current estimate of <span class="math inline">\(\boldsymbol{\Sigma}\)</span></li>
+<li>Compute updated <span class="math inline">\(\boldsymbol{\eta}=\boldsymbol{X}\boldsymbol{\alpha}
++ \boldsymbol{Z}\boldsymbol{b}\)</span>, <span class="math inline">\(\boldsymbol{\pi}\)</span>, <span class="math inline">\(\boldsymbol{W}\)</span>.</li>
+<li>If the change in <span class="math inline">\(\boldsymbol{\eta}\)</span> is smaller than a given
+tolerance criterion stop the algorighm and declare it as converged.
+Otherwise go back to step 2 with the updated values of <span class="math inline">\(\hat{\boldsymbol{\alpha}}\)</span> and <span class="math inline">\(\tilde{\boldsymbol{b}}\)</span>.</li>
+</ol>
+<p>This algorithm is a modification of the <a href="fitting-mclogit.html">IWLS</a> algorithm used to fit conditional
+logit models without random effects. Instead of just solving a linear
+requatoin in step 3, it estimates a weighted linear mixed-effects model.
+In contrast to <code>glmmPQL()</code> it does not use the
+<code>lme()</code> function from package <a href="https://cran.r-project.org/package=nlme">nlme</a> <span class="citation">(Pinheiro and Bates 2000)</span> for this, because the
+weighting matrix <span class="math inline">\(\boldsymbol{W}\)</span> is
+non-diagonal. Instead, <span class="math inline">\(q_1\)</span> or <span class="math inline">\(q_2\)</span> are minimized using the function
+<code>nlminb</code> from the standard <em>R</em> package “stats” or some
+other optimizer chosen by the user.</p>
+</div>
+</div>
+<div id="the-solomon-cox-approximation-and-mql" class="section level1">
+<h1>The Solomon-Cox approximation and MQL</h1>
+<div id="the-solomon-cox-approximation" class="section level2">
+<h2>The Solomon-Cox approximation</h2>
+<p>The (first-order) Solomon approximation <span class="citation">(Solomon and Cox 1992)</span> is based on the quadratic
+expansion the integrand</p>
+<p><span class="math display">\[
+\ell_{\text{cpl}}(\boldsymbol{y},\boldsymbol{b})\approx
+\ell(\boldsymbol{y}|\boldsymbol{0};\boldsymbol{\alpha})
++
+\boldsymbol{g}_0&#39;
+\boldsymbol{b}
+-
+\frac12
+\boldsymbol{b}&#39;
+\boldsymbol{H}_0
+\boldsymbol{b}
+-\frac12\ln\det(\boldsymbol{\Sigma})
+-\frac12\boldsymbol{b}&#39;\boldsymbol{\Sigma}^{-1}\boldsymbol{b}
+\]</span></p>
+<p>where <span class="math inline">\(\boldsymbol{g}\_0=\boldsymbol{g}(\boldsymbol{0})\)</span>
+is the gradient of <span class="math inline">\(\ell(\boldsymbol{y}\|\boldsymbol{b};\boldsymbol{\alpha})\)</span></p>
+<p><span class="math display">\[
+\boldsymbol{g}(\boldsymbol{b})=-\frac{\partial\ell(\boldsymbol{y}|\boldsymbol{b};\boldsymbol{\alpha})}{\partial\boldsymbol{b}}
+\]</span></p>
+<p>at <span class="math inline">\(\boldsymbol{b}=\boldsymbol{0}\)</span>, while
+<span class="math inline">\(\boldsymbol{H}\_0=\boldsymbol{H}(\boldsymbol{0})\)</span>
+is the negative Hessian at <span class="math inline">\(\boldsymbol{b}=\boldsymbol{0}\)</span>.</p>
+<p>Like before, the integral of the exponential this quadratic expansion
+(which we refer to as <span class="math inline">\(\ell_{\text{SC}}(\boldsymbol{y},\boldsymbol{b})\)</span>)
+has a closed-form solution, as does its logarithm, which is:</p>
+<p><span class="math display">\[
+\ln\int \exp(\ell_{\text{SC}}(\boldsymbol{y},\boldsymbol{b}))
+\partial\boldsymbol{b}
+=
+\ell(\boldsymbol{y}|\boldsymbol{0};\boldsymbol{\alpha})
+-
+\frac12\boldsymbol{g}_0&#39;\left(\boldsymbol{H}_0+\boldsymbol{\Sigma}^{-1}\right)^{-1}\boldsymbol{g}_0
+-
+\frac12\ln\det(\boldsymbol{\Sigma})
+-
+\frac12\ln\det\left(\boldsymbol{H}_0+\boldsymbol{\Sigma}^{-1}\right).
+\]</span></p>
+</div>
+<div id="marginal-quasi-likelhood-mql" class="section level2">
+<h2>Marginal quasi-likelhood (MQL)</h2>
+<p>The resulting estimation technique is very similar to PQL <span class="citation">(again, see Breslow and Clayton 1993 for a
+discussion)</span>. The only difference is the construction of the
+“working dependent” variable <span class="math inline">\(\boldsymbol{y}^*\)</span>. With PQL it is
+constructed as <span class="math display">\[\boldsymbol{y}^* =
+\boldsymbol{X}\boldsymbol{\alpha} + \boldsymbol{Z}\boldsymbol{b} +
+\boldsymbol{W}^{-}(\boldsymbol{y}-\boldsymbol{\pi})\]</span> while the
+MQL working dependent variable is just</p>
+<p><span class="math display">\[
+\boldsymbol{y}^* =  \boldsymbol{X}\boldsymbol{\alpha} +
+\boldsymbol{W}^{-}(\boldsymbol{y}-\boldsymbol{\pi})
+\]</span></p>
+<p>so that the algorithm has the following steps:</p>
+<ol style="list-style-type: decimal">
+<li>Create some suitable starting values for <span class="math inline">\(\boldsymbol{\pi}\)</span>, <span class="math inline">\(\boldsymbol{W}\)</span>, and <span class="math inline">\(\boldsymbol{y}^*\)</span></li>
+<li>Construct the “working dependent variable” <span class="math inline">\(\boldsymbol{y}^*\)</span></li>
+<li>Minimize <span class="math inline">\(q_1\)</span> (quasi-ML) or
+<span class="math inline">\(q_2\)</span> (quasi-REML) iteratively (inner
+loop), to obtain an estimate of <span class="math inline">\(\boldsymbol{\Sigma}\)</span></li>
+<li>Obtain <span class="math inline">\(\hat{\boldsymbol{\alpha}}\)</span> based on the
+current estimate of <span class="math inline">\(\boldsymbol{\Sigma}\)</span></li>
+<li>Compute updated <span class="math inline">\(\boldsymbol{\eta}=\boldsymbol{X}\boldsymbol{\alpha}\)</span>,
+<span class="math inline">\(\boldsymbol{\pi}\)</span>, <span class="math inline">\(\boldsymbol{W}\)</span>.</li>
+<li>If the change in <span class="math inline">\(\boldsymbol{\eta}\)</span> is smaller than a given
+tolerance criterion stop the algorighm and declare it as converged.
+Otherwise go back to step 2 with the updated values of <span class="math inline">\(\hat{\boldsymbol{\alpha}}\)</span>.</li>
+</ol>
+</div>
+</div>
+<div id="references" class="section level1 unnumbered">
+<h1 class="unnumbered">References</h1>
+<div id="refs" class="references csl-bib-body hanging-indent">
+<div id="ref-breslow.clayton:approximate.inference.glmm" class="csl-entry">
+Breslow, Norman E., and David G. Clayton. 1993. <span>“Approximate
+Inference in Generalized Linear Mixed Models.”</span> <em>Journal of the
+American Statistical Association</em> 88 (421): 9–25.
+</div>
+<div id="ref-harville:matrix.algebra" class="csl-entry">
+Harville, David A. 1997. <em>Matrix Algebra from a Statistician’s
+Perspective</em>. New York: Springer.
+</div>
+<div id="ref-nlme-book" class="csl-entry">
+Pinheiro, José C., and Douglas M. Bates. 2000. <em>Mixed-Effects Models
+in s and s-PLUS</em>. New York: Springer. <a href="https://doi.org/10.1007/b98882">https://doi.org/10.1007/b98882</a>.
+</div>
+<div id="ref-Solomon.Cox:1992" class="csl-entry">
+Solomon, P. J., and D. R. Cox. 1992. <span>“Nonlinear Component of
+Variance Models.”</span> <em>Biometrika</em> 79 (1): 1–11. <a href="https://doi.org/10.1093/biomet/79.1.1">https://doi.org/10.1093/biomet/79.1.1</a>.
+</div>
+<div id="ref-MASS" class="csl-entry">
+Venables, W. N., and B. D. Ripley. 2002. <em>Modern Applied Statistics
+with s</em>. Fourth. New York: Springer. <a href="https://www.stats.ox.ac.uk/pub/MASS4/">https://www.stats.ox.ac.uk/pub/MASS4/</a>.
+</div>
+</div>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

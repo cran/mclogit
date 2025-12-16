@@ -12,6 +12,22 @@
       \item The left-hand side of conditional logit models can now
       more conveniently specified using the vertical-bar (\code{|})
       operator.
+      \item It is now possible to choose between different
+      optimizers to be used in the inner iterations of the MQL/PQL
+      estimator: One can choose between \code{nlm()}, \code{nlminb()},
+      \code{ucminf()}, and most techniques provided by \code{optim()}.
+      \item With \code{rebase()} the baseline category of a model
+      can be changed without the need of refitting the model.
+      \item \code{mblogit()} and \code{mclogit()} now have a
+      \code{groups=} argument that allows to estimated 
+      overdispersion (across groups).
+      \item \code{mblogit()} and \code{mclogit()} now also have an
+      \code{offset=} argument that to add an offset to the model
+      (i.e. a covariate with coeffecient fixed to unity). For \code{mblogit()}
+      the offset can be a matrix with a column for each logit equation.
+      \item It is now possible to pass a string to \code{mblogit()} as 
+      \code{dispersion=} argument that specifies the method of estimating
+      overdispersion.
     }
   }
   \subsection{BUGFIXES}{
@@ -19,6 +35,7 @@
       \item Singular initial covariance matrices no longer cause errors.
       \item A warning about unreliable results is issued if
       \code{anova()} is applied to models with random effects.
+      \item Estimating of overdispersion with group data now works.
     }
   }
   \subsection{IMPROVEMENTS}{
@@ -26,6 +43,8 @@
       \item \code{mclogit()} and \code{mblogit()} check whether the list
       passed as \code{control} is complete i.e. contains all the relevant
       named arguments.
+      \item A \code{ranef()} method is provided for objects created
+      by \code{mclogit()} or \code{mblogit()}.
     }
   }
 }

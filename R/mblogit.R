@@ -21,6 +21,8 @@
 #'     used in the fitting process.
 #' @param weights an optional vector of weights to be used in the fitting
 #'     process.  Should be \code{NULL} or a numeric vector.
+#' @param offset an optional model offset. If not NULL, must be a matrix
+#'     if as many columns as the response has categories or one less.
 #' @param na.action a function which indicates what should happen when the data
 #'     contain \code{NA}s.  The default is set by the \code{na.action} setting
 #'     of \code{\link{options}}, and is \code{\link{na.fail}} if that is unset.
@@ -42,7 +44,7 @@
 #' @param dispersion a logical value or a character string; whether and how a
 #'     dispersion parameter should be estimated. For details see
 #'     \code{\link{dispersion}}.
-#' @param  start an optional matrix of starting values (with as many rows
+#' @param start an optional matrix of starting values (with as many rows
 #'     as logit equations). If the model has random effects, the matrix
 #'     should have a "VarCov" attribute wtih starting values for
 #'     the random effects (co-)variances. If the random effects model
@@ -50,15 +52,27 @@
 #'     should also have a "random.effects" attribute, which should have
 #'     the same structure as the "random.effects" component of an object
 #'     returned by \code{mblogit()}.
-#' @param from.table a logical value; do the data represent a contingency table,
-#'     e.g. were created by applying \code{as.data.frame()} a the result of
-#'     \code{table()} or \code{xtabs()}.  This relevant only if the response is
-#'     a factor. This argument should be set to \code{TRUE} if the data do come
-#'     from a contingency table. Correctly setting \code{from.table=TRUE} in
-#'     this case, will lead to efficiency gains in computing, but more
-#'     importantly overdispersion will correctly be computed if present.
+#' @param aggregate a logical value; whether to aggregate responses by
+#'     covariate classes and groups before estimating the model
+#'     if the response variable is a factor. 
+#'     
+#'     This will not affect the estimates, but the dispersion and the
+#'     residual degrees of freedom. If \code{aggregate=TRUE}, the 
+#'     dispersion will be relative to a saturated model; it will be much 
+#'     smaller than with \code{aggregate=TRUE}. In particular, with only
+#'     a single covariate and no grouping, the deviance will be close to
+#'     zero. If \code{dispersion} is not \code{FALSE}, then the
+#'     default value of \code{aggregate} will be \code{TRUE}. For details see
+#'     \code{\link{dispersion}}.
+#'     
+#'     This argument has consequences only if the response in \code{formula}
+#'     is a factor.
 #' @param groups an optional formula that specifies groups of observations
-#'     relevant for the specification of overdispersed response counts.
+#'     relevant for the estimation of overdispersion. For details see
+#'     \code{\link{dispersion}}.
+#' @param from.table a logical value; should be FALSE. This argument
+#'     only exists for the sake of compatibility and will be removed
+#'     in the next relase.
 #' @param control a list of parameters for the fitting process.  See
 #'     \code{\link{mclogit.control}}
 #' @param \dots arguments to be passed to \code{mclogit.control} or
@@ -89,12 +103,12 @@
 #' @references
 #'    Agresti, Alan. 2002.
 #'    \emph{Categorical Data Analysis.} 2nd ed, Hoboken, NJ: Wiley.
-#'    \url{https://doi.org/10.1002/0471249688}
+#'    \doi{10.1002/0471249688}
 #'
 #'    Breslow, N.E. and D.G. Clayton. 1993.
 #'    "Approximate Inference in Generalized Linear Mixed Models".
 #'    \emph{Journal of the American Statistical Association} 88 (421): 9-25.
-#'    \url{https://doi.org/10.1080/01621459.1993.10594284}
+#'    \doi{10.1080/01621459.1993.10594284}
 #'
 #' 
 #' @aliases print.mblogit summary.mblogit print.summary.mblogit fitted.mblogit
@@ -105,6 +119,7 @@ mblogit <- function(formula,
                     catCov=c("free","diagonal","single"),
                     subset,
                     weights=NULL,
+                    offset=NULL,
                     na.action = getOption("na.action"),
                     model = TRUE, x = FALSE, y = TRUE,
                     contrasts=NULL,
@@ -112,15 +127,26 @@ mblogit <- function(formula,
                     estimator=c("ML","REML"),
                     dispersion = FALSE,
                     start = NULL,
-                    from.table = FALSE,
+                    aggregate = FALSE,
                     groups = NULL,
+                    from.table = FALSE,
                     control=if(length(random))
                                 mmclogit.control(...)
                             else mclogit.control(...),
                     ...){
-    
+
     call <- match.call(expand.dots = TRUE)
     
+    if(!missing(from.table)) {
+        warning("Argument 'from.table' is deprecated. Use 'aggregate=TRUE' instead.")
+        if(missing(aggregate))
+            aggregate <- from.table
+    }
+    if(!aggregate) {
+        if(length(groups))
+            warning("Argument 'groups' is inconsequential unless aggregate=TRUE")
+    }
+
     if(missing(data)) data <- environment(formula)
     else if(is.table(data)){
         from.table <- TRUE
@@ -129,7 +155,10 @@ mblogit <- function(formula,
     else 
         data <- as.data.frame(data)
     mf <- match.call(expand.dots = FALSE)
-    m <- match(c("formula", "data", "subset", "weights", "offset", "na.action"), names(mf), 0)
+    m <- match(c("formula", "data", "subset", "weights", "na.action"), names(mf), 0)
+    if("offset" %in% names(mf)) {
+        offset <- eval(mf$offset,data,environment(formula))
+    }
     mf <- mf[c(1, m)]
     mf$drop.unused.levels <- TRUE
     mf[[1]] <- as.name("model.frame")
@@ -178,13 +207,13 @@ mblogit <- function(formula,
         mff <- eval(mff, parent.frame())
         mf$formula <- update(mff,gf)
         mf <- eval(mf, parent.frame())
+        groups <- all.vars(groups)
+        groups <- mf[groups]
+        # if(length(groups) > 1) stop("Multiple groups not supported")
         check.names(control,
                     "epsilon","maxit",
-                    "trace","trace.inner",
-                    "avoid.increase",
-                    "break.on.increase",
-                    "break.on.infinite",
-                    "break.on.negative")
+                    "trace"
+                    )
     }
     else {
         mf <- eval(mf, parent.frame())
@@ -196,7 +225,6 @@ mblogit <- function(formula,
     
     na.action <- attr(mf,"na.action")
     weights <- as.vector(model.weights(mf))
-    offset <- as.vector(model.offset(mf))
     if(!is.null(weights) && !is.numeric(weights))
         stop("'weights' must be a numeric vector")
     
@@ -210,50 +238,66 @@ mblogit <- function(formula,
     N <- sum(weights)
     prior.weights <- weights
 
-    if(is.factor(Y)){
-        response.type <- "factor"
+    if(is.factor(Y)) {
         n.categs <- nlevels(Y)
         n.obs <- length(Y)
-        if(from.table){
-            # Create an appropriate response matrix if data
-            # come from a table of frequencies
-            tmf <- terms(mf)
-            respix <- attr(tmf,"response")
-            vars <- as.character(attr(tmf,"variables")[-1])
-            respname <- vars[respix]
-            respix <- match(respname,names(mf))
-        
-            wghix <- match("(weights)",names(mf))
-            mf1 <- mf[-c(respix,wghix)]
-
-            umf1 <- !duplicated(mf1)
-            i <- cumsum(umf1)
-            j <- as.integer(Y)
-            attr(mf,"ij") <- cbind(i,j)
-            attr(mf,"j==1") <- umf1
-            
-            levs <- levels(Y)
-            m <- nlevels(Y)
-            n <- i[length(i)]
-
-            Y <- matrix(0,nrow=n,ncol=m)
-            Y[cbind(i,j)] <- prior.weights
-            w <- rowSums(Y)
-            Y <- Y/w
-            if(any(w==0)){
-                Y[w==0,] <- 0
-                N <- sum(weights[w>0])
-                warning(sprintf("ignoring %d observerations with counts that sum to zero",
-                                sum(w==0)),
-                        call. = FALSE, immediate. = TRUE)
+    } else if(is.matrix(Y)) {
+        n.categs <- ncol(Y)
+        n.obs <- nrow(Y)
+    } else {
+        stop("Response must be either a factor or a matrix of counts")
+    }
+    if(length(offset)) {
+        if(!is.matrix(offset)) {
+            if(length(offset) != n.obs) stop("'offset' has wrong length")
+            offset <- matrix(offset,ncol=n.categs-1) 
+            offset <- cbind(0, offset)
+        } else {
+            if(nrow(offset) != n.obs) 
+                stop("'offset' has wrong number of rows")
+            if(ncol(offset) != n.categs) {
+                if(ncol(offset) != n.categs - 1)
+                    stop(sprintf("'offset' must either have %d or %d columns",
+                                n.categs-1, n.categs))
+                offset <- cbind(0, offset)
             }
-            Y <- as.vector(t(Y))
-            weights <- rep(w,each=m)
-            D <- diag(m)[,-1, drop=FALSE]
-            dimnames(D) <- list(levs,levs[-1])
-            X <- X[umf1,,drop=FALSE]
         }
-        else {
+    }
+
+    if(is.factor(Y)){
+        response.type <- "factor"
+        if(!isFALSE(dispersion)) {
+            aggregate <- TRUE
+        }
+        if(aggregate && !length(random)) {
+            if(!length(random)) {
+                D <- structure(diag(n.categs),
+                            dimnames=rep(list(levels(Y)),2))[,-1, drop=FALSE]
+                tmf <- terms(mf)
+                respix <- attr(tmf,"response")
+                vars <- as.character(attr(tmf,"variables")[-1])
+                respname <- vars[respix]
+                respix <- match(respname,names(mf),nomatch=0L)
+            
+                wghix <- match("(weights)",names(mf),nomatch=0L)
+                mf1 <- mf[-c(respix,wghix)]
+
+                strata <- quickInteraction(mf1)
+                
+                weights.tab <- rowsum(weights,
+                                    quickInteraction(list(Y,strata)))
+                dim(weights.tab) <- c(n.categs,attr(strata,"n"))
+                w <- colSums(weights.tab)
+                weights <- rep(w,each=n.categs)
+                Y <- as.vector(weights.tab/weights)
+                keep <- !duplicated(strata)
+                X <- X[keep,,drop=FALSE]
+                if(is.matrix(offset))
+                    offset <- offset[keep,,drop=FALSE]
+            } else {
+                stop("'aggregate' is not yet supported with random effects")
+            }
+        } else {
             weights <- rep(weights,each=nlevels(Y))
             D <- diag(nlevels(Y))[,-1, drop=FALSE]
             dimnames(D) <- list(levels(Y),levels(Y)[-1])
@@ -265,7 +309,7 @@ mblogit <- function(formula,
         response.type <- "matrix"
         n.categs <- ncol(Y)
         n.obs <- nrow(Y)
-        
+
         D <- diag(ncol(Y))[,-1, drop=FALSE]
         if(length(colnames(Y))){
             rownames(D) <- colnames(Y)
@@ -314,11 +358,20 @@ mblogit <- function(formula,
                                   "~",
                                   rep(colnames(X),each=ncol(D)))
 
-    if(!length(random))
+    if(is.matrix(offset)){
+        Offset <- offset
+        offset <- as.vector(t(offset))
+    } else {
+        Offset <- NULL
+    }
+
+    if(!length(random)){
         fit <- mclogit.fit(y=Y,s=s,w=weights,X=XD,
                            dispersion=dispersion,
+                           control=control,
                            start=start,
-                           control=control)
+                           offset = offset)
+    }
     else { ## random effects
 
         if(!length(method)) method <- "PQL"
@@ -477,13 +530,13 @@ mblogit <- function(formula,
             dimnames(fit$VarCov[[k]]) <- list(VarCov.names[[k]],VarCov.names[[k]])
         names(fit$VarCov) <- names(groups)
     }
-    
+    fit$offset <- Offset
+
     coefficients <- fit$coefficients
     coefmat <- matrix(coefficients,nrow=ncol(D),
-                      dimnames=list("Response categories"=colnames(D),
+                      dimnames=list("Logit eqn."=colnames(D),
                                     "Predictors"=colnames(X)
                                     ))
-    
     
     fit$coefmat <- coefmat
     fit$coefficients <- coefficients
@@ -509,7 +562,8 @@ mblogit <- function(formula,
                       D=D,
                       N=N,
                       response.type=response.type,
-                      from.table=from.table))
+                      aggregated = aggregate,
+                      catCov = catCov))
 
     if(length(random)){
         class(fit) <- c("mmblogit","mblogit","mmclogit","mclogit","lm")
@@ -582,7 +636,7 @@ print.summary.mblogit <-
     for(i in 1:ncategs){
       cat <- categs[i]
       patn <- paste0(cat,"~")
-      ii <- grep(patn,rn.coefs,fixed=TRUE)
+      ii <- which(startsWith(rn.coefs,patn))
       coefs.cat <- coefs[ii,,drop=FALSE]
       rownames(coefs.cat) <- gsub(patn,"",rownames(coefs.cat))
       if(i>1) cat("\n")
@@ -648,10 +702,21 @@ predict.mblogit <- function(object, newdata=NULL,type=c("link","response"),se.fi
   if(missing(newdata)){
     m <- object$model
     na.act <- object$na.action
+    offset <- object$offset
   }
   else{
     m <- model.frame(rhs,data=newdata,na.action=na.exclude)
     na.act <- attr(m,"na.action")
+    offset <- model.offset(m)
+    offset_in_call <- object$call$offset
+    if(!is.null(offset_in_call)){
+        offset_in_call <- eval(offset_in_call,newdata,
+                               environment(terms(object)))
+        if(length(offset))
+            offset <- offset + offset_in_call
+        else
+            offset <- offset_in_call
+    }
   }
   X <- model.matrix(rhs,m,
                     contrasts.arg=object$contrasts,
@@ -659,14 +724,35 @@ predict.mblogit <- function(object, newdata=NULL,type=c("link","response"),se.fi
   )
   rn <- rownames(X)
   D <- object$D
+  n.obs <- nrow(X)
+  n.categs <- nrow(D)
   XD <- X%x%D
+  eta <- c(XD %*% coef(object))
+  
+  if(length(offset)) {
+      if(!is.matrix(offset)) {
+          if(length(offset) != n.obs) stop("'offset' has wrong length")
+          offset <- matrix(offset,ncol=n.categs-1) 
+          offset <- cbind(0, offset)
+      } else {
+          if(nrow(offset) != n.obs) 
+              stop("'offset' has wrong number of rows")
+          if(ncol(offset) != n.categs) {
+              if(ncol(offset) != n.categs - 1)
+                  stop(sprintf("'offset' must either have %d or %d columns",
+                              n.categs-1, n.categs))
+              offset <- cbind(0, offset)
+          }
+      }
+      offset <- as.vector(t(offset))
+      eta <- eta + offset
+  }
+
   rspmat <- function(x){
     y <- t(matrix(x,nrow=nrow(D)))
     colnames(y) <- rownames(D)
     y
   }
-  
-  eta <- c(XD %*% coef(object))
   eta <- rspmat(eta)
   rownames(eta) <- rn
   if(se.fit){
@@ -725,6 +811,35 @@ weights.mblogit <- function (object, ...)
   else naresid(object$na.action, res)
 }
 
+format_VarCov <- function(x, digits = 3){
+    x <- format(x, digits = digits)
+    x[upper.tri(x)] <- ""
+    return(x)
+}
+
+rcomb <- function(x){
+    total.cnames <- unique(unlist(lapply(x,colnames)))
+    total.ncol <- length(total.cnames)
+    res <- matrix(nrow=0,ncol=total.ncol)
+    for(i in seq_along(x)){
+        x.i <- x[[i]]
+        res.i <- matrix("",nrow=nrow(x.i),ncol=total.ncol)
+        res.i[,match(colnames(x.i),total.cnames)] <- x.i
+        res <- rbind(res,res.i)
+    }
+    total.rnames <- unlist(lapply(x,rownames))
+    colnames(res) <- total.cnames
+    rownames(res) <- total.rnames
+    return(res)
+}
+
+VC_colnames_drop_lhs <- function(x){
+    coln <- colnames(x)
+    coln <- strsplit(coln,"~",fixed=TRUE)
+    coln <-  unlist(lapply(coln,"[",2))
+    colnames(x) <- paste0(".~",coln)
+    return(x)
+}
 
 print.mmblogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
     cat(paste(deparse(x$call), sep="\n", collapse="\n"), "\n\n", sep="")
@@ -753,13 +868,22 @@ print.mmblogit <- function(x,digits= max(3, getOption("digits") - 3), ...){
 
     cat("\n(Co-)Variances:\n")
     VarCov <- x$VarCov
-    for(k in 1:length(VarCov)){
-        if(k > 1) cat("\n")
-        cat("Grouping level:",names(VarCov)[k],"\n")
-        VarCov.k <- VarCov[[k]]
-        VarCov.k[] <- format(VarCov.k, digits=digits)
-        VarCov.k[upper.tri(VarCov.k)] <- ""
-        print.default(VarCov.k, print.gap = 2, quote = FALSE)
+    nVC <- names(VarCov)
+    unVC <- unique(nVC)
+    for(nm in unVC){
+        cat("\nGrouping level:",nm,"\n")
+        k <- which(nVC==nm)
+        VarCov.nm <- VarCov[k]
+        if(length(VarCov.nm) == 1){
+            VarCov.nm <- format_VarCov(VarCov.nm[[1]], digits = digits)
+            print.default(VarCov.nm, print.gap = 2, quote = FALSE)
+        }
+        else {
+            VarCov.nm <- lapply(VarCov.nm, format_VarCov, digits = digits)
+            VarCov.nm <- lapply(VarCov.nm,VC_colnames_drop_lhs)
+            VarCov.nm <- rcomb(VarCov.nm)
+            print.default(VarCov.nm, print.gap = 2, quote = FALSE)
+        }
     }
     
     cat("\nNull Deviance:    ",   format(signif(x$null.deviance, digits)),
@@ -795,8 +919,8 @@ print.summary.mmblogit <-
     
     for(i in 1:ncategs){
       cat <- categs[i]
-      patn <- paste0(cat,"~")
-      ii <- grep(patn,rn.coefs,fixed=TRUE)
+      patn <- paste0("^",cat,"~")
+      ii <- grep(patn,rn.coefs)
       coefs.cat <- coefs[ii,,drop=FALSE]
       rownames(coefs.cat) <- gsub(patn,"",rownames(coefs.cat))
       if(i>1) cat("\n")
@@ -809,33 +933,48 @@ print.summary.mmblogit <-
     cat("\n(Co-)Variances:\n")
     VarCov <- x$VarCov
     se_VarCov <- x$se_VarCov
-    for(k in 1:length(VarCov)){
-        if(k > 1) cat("\n")
-        cat("Grouping level:",names(VarCov)[k],"\n")
-        VarCov.k <- VarCov[[k]]
-        VarCov.k[] <- format(VarCov.k, digits=digits)
-        VarCov.k[upper.tri(VarCov.k)] <- ""
-        #print.default(VarCov.k, print.gap = 2, quote = FALSE)
-        VarCov.k <- format_Mat(VarCov.k,title="Estimate")
-
-        se_VarCov.k <- se_VarCov[[k]]
-        se_VarCov.k[] <- format(se_VarCov.k, digits=digits)
-        se_VarCov.k[upper.tri(se_VarCov.k)] <- ""
-        se_VarCov.k <- format_Mat(se_VarCov.k,title="Std.Err.",rownames=" ")
-
-        VarCov.k <- paste(VarCov.k,se_VarCov.k)
-        writeLines(VarCov.k)
+    nVC <- names(VarCov)
+    unVC <- unique(nVC)
+    for(nm in unVC){
+        cat("\nGrouping level:",nm,"\n")
+        k <- which(nVC==nm)
+        VarCov.nm <- VarCov[k]
+        if(length(VarCov.nm) == 1){
+            VarCov.k <- format_VarCov(VarCov[[k]], digits = digits)
+            VarCov.k <- format_Mat(VarCov.k,title="Estimate")
+            se_VarCov.k <- se_VarCov[[k]]
+            se_VarCov.k <- format_VarCov(se_VarCov[[k]], digits = digits)
+            se_VarCov.k <- format_Mat(se_VarCov.k,title="Std.Err.")
+            VarCov.k <- paste(VarCov.k,se_VarCov.k)
+            writeLines(VarCov.k)
+        }
+        else {
+            VarCov.nm <- lapply(VarCov.nm, format_VarCov, digits = digits)
+            VarCov.nm <- lapply(VarCov.nm,VC_colnames_drop_lhs)
+            VarCov.nm <- rcomb(VarCov.nm)
+            VarCov.nm <- format_Mat(VarCov.nm,title="Estimate")
+            se_VarCov.nm <- se_VarCov[k]
+            se_VarCov.nm <- lapply(se_VarCov.nm, format_VarCov, digits = digits)
+            se_VarCov.nm <- lapply(se_VarCov.nm,VC_colnames_drop_lhs)
+            se_VarCov.nm <- rcomb(se_VarCov.nm)
+            se_VarCov.nm <- format_Mat(se_VarCov.nm,title="Std.Err.")
+            VarCov.nm <- paste(VarCov.nm,se_VarCov.nm)
+            writeLines(VarCov.nm)
+        }
     }
 
     cat("\nApproximate residual deviance:", format(signif(x$deviance, digits)),
         "\nNumber of Fisher scoring iterations: ", x$iter)
 
     cat("\nNumber of observations")
-    for(i in seq_along(x$groups)){
-        g <- nlevels(x$groups[[i]])
-        nm.group <- names(x$groups)[i]
+    nm_grps <- names(x$groups)
+    unm_grps <- unique(nm_grps)
+    for(nm in unm_grps){
+        k <- which(nm_grps == nm)
+        grps_k <- x$groups[k]
+        g <- nlevels(grps_k[[1]])
         cat("\n  Groups by",
-            paste0(nm.group,": ",format(g)))
+            paste0(nm,": ",format(g)))
     }
     cat("\n  Individual observations: ",x$N)
 
@@ -865,7 +1004,7 @@ simulate.mblogit <- function(object, nsim = 1, seed = NULL, ...){
     if(object$phi > 1)
         stop("Simulating responses from models with oversdispersion is not supported yet")
 
-    if(object$response.type=="matrix" || object$from.table){
+    if(object$response.type=="matrix" || object$aggregated){
         yy <- NextMethod()
         seed_attr <- attr(yy,"seed")
         nm <- nrow(yy)
@@ -938,7 +1077,8 @@ predict.mmblogit <- function(object, newdata=NULL,type=c("link","response"),se.f
                              conditional=TRUE, ...){
     
     type <- match.arg(type)
-    rhs <- object$formula[-2]
+    mt <- terms(object)
+    rhs <- delete.response(mt)
     random <- object$random  
     if(missing(newdata)){
         mf <- object$model
@@ -967,56 +1107,154 @@ predict.mmblogit <- function(object, newdata=NULL,type=c("link","response"),se.f
     eta <- c(XD %*% coef(object))
 
     if(object$method=="PQL" && conditional){
-
         rf <- lapply(random,"[[","formula")
         rt <- lapply(rf,terms)
         suppressWarnings(Z <- lapply(rt,model.matrix,rmf,
                                      contrasts.arg=object$contrasts,
                                      xlev=object$xlevels))
         
-        ZD <- lapply(Z,`%x%`,D)
-        d <- sapply(ZD,ncol)
-
-        nn <- length(ZD)
-        for(k in 1:nn){
-            colnames(ZD[[k]]) <- paste0(rep(colnames(D),ncol(Z[[k]])),
-                                        "~",
-                                        rep(colnames(Z[[k]]),each=ncol(D)))
-            colnames(ZD[[k]]) <- gsub("(Intercept)","1",colnames(ZD[[k]]),fixed=TRUE)
-        }
+        catCov <- object$catCov
+        if(!length(catCov)) catCov <- "free"
+        n.categs <- nrow(D)
 
         orig.groups <- object$groups
         olevels <- lapply(orig.groups,levels)
-        randstruct <- lapply(1:nn,function(k){
-            group.labels <- random[[k]]$groups
-            groups <- rmf[group.labels]
-            groups <- lapply(groups,as.factor)
-            nlev <- length(groups)
-            if(nlev > 1){
-                for(i in 2:nlev){
-                    groups[[i]] <- interaction(groups[c(i-1,i)])
-                    group.labels[i] <- paste(group.labels[i-1],group.labels[i],sep=":")
-                }
-            }
-            groups <- lapply(groups,rep,each=nrow(D))
-            olevels <- olevels[group.labels]
-            groups <- Map(factor,x=groups,levels=olevels)
-            
-            VarCov.names.k <- rep(list(colnames(ZD[[k]])),nlev)
-            ZD_k <- lapply(groups,mkZ,rX=ZD[[k]])
-            d <- rep(d[k],nlev)
-            names(groups) <- group.labels
-            list(ZD_k,groups,d,VarCov.names.k)
-        })
 
-        ZD <- lapply(randstruct,`[[`,1)
-        groups <- lapply(randstruct,`[[`,2)
-        ZD <- unlist(ZD,recursive=FALSE)
-        d <- lapply(randstruct,`[[`,3)
-        groups <- unlist(groups,recursive=FALSE)
-        d <- unlist(d)
-        
-        ZD <- blockMatrix(ZD)
+        if(catCov == "free"){
+            ZD <- lapply(Z,`%x%`,D)
+            d <- sapply(ZD,ncol)
+
+            nn <- length(ZD)
+            for(k in 1:nn){
+                colnames(ZD[[k]]) <- paste0(rep(colnames(D),ncol(Z[[k]])),
+                                            "~",
+                                            rep(colnames(Z[[k]]),each=ncol(D)))
+                colnames(ZD[[k]]) <- gsub("(Intercept)","1",colnames(ZD[[k]]),fixed=TRUE)
+            }
+
+            randstruct <- lapply(1:nn,function(k){
+                group.labels <- random[[k]]$groups
+                groups <- rmf[group.labels]
+                groups <- lapply(groups,as.factor)
+                nlev <- length(groups)
+                if(nlev > 1){
+                    for(i in 2:nlev){
+                        groups[[i]] <- interaction(groups[c(i-1,i)])
+                        group.labels[i] <- paste(group.labels[i-1],group.labels[i],sep=":")
+                    }
+                }
+                groups <- lapply(groups,rep,each=nrow(D))
+                olevels <- olevels[group.labels]
+                groups <- Map(factor,x=groups,levels=olevels)
+                
+                VarCov.names.k <- rep(list(colnames(ZD[[k]])),nlev)
+                ZD_k <- lapply(groups,mkZ,rX=ZD[[k]])
+                d <- rep(d[k],nlev)
+                names(groups) <- group.labels
+                list(ZD_k,groups,d,VarCov.names.k)
+            })
+            ZD <- lapply(randstruct,`[[`,1)
+            groups <- lapply(randstruct,`[[`,2)
+            d <- lapply(randstruct,`[[`,3)
+            VarCov.names <- lapply(randstruct,`[[`,4)
+            ZD <- unlist(ZD,recursive=FALSE)
+            groups <- unlist(groups,recursive=FALSE)
+            VarCov.names <- unlist(VarCov.names,recursive=FALSE)
+            d <- unlist(d)
+            ZD <- blockMatrix(ZD,ncol=length(ZD))
+        } else if(catCov =="single"){
+            n.obs <- nrow(X)
+            cc <- rep(1:n.categs,n.obs)
+            d <- sapply(Z,ncol)
+
+            nn <- length(Z)
+
+            for(k in 1:nn){
+                colnames(Z[[k]]) <- paste0("~",colnames(Z[[k]]))
+                colnames(Z[[k]]) <- gsub("(Intercept)","1",colnames(Z[[k]]),fixed=TRUE)
+            }
+
+            randstruct <- lapply(1:nn,function(k){
+                group.labels <- random[[k]]$groups
+                groups <- mf[group.labels]
+                groups <- lapply(groups,as.factor)
+                nlev <- length(groups)
+                groups[[1]] <- interaction(cc,groups[[1]])
+                if(nlev > 1){
+                    for(i in 2:nlev){
+                        groups[[i]] <- interaction(groups[c(i-1,i)])
+                        group.labels[i] <- paste(group.labels[i-1],group.labels[i],sep=":")
+                    }
+                }
+                groups <- lapply(groups,rep,each=nrow(D))
+                olevels <- olevels[group.labels]
+                groups <- Map(factor,x=groups,levels=olevels)
+                
+                VarCov.names.k <- rep(list(colnames(Z[[k]])),nlev)
+                ZD_k <- lapply(groups,mkZ,rX=Z[[k]])
+                d <- rep(d[k],nlev)
+                names(groups) <- group.labels
+                list(ZD_k,groups,d,VarCov.names.k)
+            })
+            ZD <- lapply(randstruct,`[[`,1)
+            groups <- lapply(randstruct,`[[`,2)
+            d <- lapply(randstruct,`[[`,3)
+            VarCov.names <- lapply(randstruct,`[[`,4)
+            ZD <- unlist(ZD,recursive=FALSE)
+            groups <- unlist(groups,recursive=FALSE)
+            VarCov.names <- unlist(VarCov.names,recursive=FALSE)
+            d <- unlist(d)
+            ZD <- blockMatrix(ZD,ncol=length(ZD))
+        } else { # catCov == "diagonal"
+            categs <- 1:n.categs
+            randstruct <- list()
+            for(categ in categs){
+                u <- as.integer(categ==categs)
+
+                ZD <- lapply(Z,`%x%`,u)
+                d <- sapply(ZD,ncol)
+
+                nn <- length(ZD)
+
+                for(k in 1:nn){
+                    colnames(ZD[[k]]) <- paste0(rownames(D)[categ],"~",colnames(Z[[k]]))
+                    colnames(ZD[[k]]) <- gsub("(Intercept)","1",colnames(ZD[[k]]),fixed=TRUE)
+                }
+
+                randstruct_c <- lapply(1:nn,function(k){
+                    group.labels <- random[[k]]$groups
+                    groups <- mf[group.labels]
+                    groups <- lapply(groups,as.factor)
+                    nlev <- length(groups)
+                    if(nlev > 1){
+                        for(i in 2:nlev){
+                            groups[[i]] <- interaction(groups[c(i-1,i)])
+                            group.labels[i] <- paste(group.labels[i-1],group.labels[i],sep=":")
+                        }
+                    }
+                    groups <- lapply(groups,rep,each=nrow(D))
+                    olevels <- olevels[group.labels]
+                    groups <- Map(factor,x=groups,levels=olevels)
+                   
+                    VarCov.names.k <- rep(list(colnames(ZD[[k]])),nlev)
+                    ZD_k <- lapply(groups,mkZ,rX=ZD[[k]])
+                    d <- rep(d[k],nlev)
+                    names(groups) <- group.labels
+                    list(ZD_k,groups,d,VarCov.names.k)
+                })
+                randstruct <- c(randstruct,randstruct_c)
+            }
+            ZD <- lapply(randstruct,`[[`,1)
+            groups <- lapply(randstruct,`[[`,2)
+            d <- lapply(randstruct,`[[`,3)
+            VarCov.names <- lapply(randstruct,`[[`,4)
+            ZD <- unlist(ZD,recursive=FALSE)
+            groups <- unlist(groups,recursive=FALSE)
+            VarCov.names <- unlist(VarCov.names,recursive=FALSE)
+            d <- unlist(d)
+            ZD <- blockMatrix(ZD,ncol=length(ZD))
+        }
+
         b <- object$random.effects
         nlev <- length(ZD)
         
@@ -1049,7 +1287,6 @@ predict.mmblogit <- function(object, newdata=NULL,type=c("link","response"),se.f
         W <- Diagonal(x=pv)-tcrossprod(W)
         WX <- W%*%XD
         if(object$method=="PQL"){
-            WZ <- bMatProd(W,ZD)
             H <- object$info.fixed.random
             K <- solve(H)
         }
@@ -1058,6 +1295,7 @@ predict.mmblogit <- function(object, newdata=NULL,type=c("link","response"),se.f
     if(type=="response") {
         if(se.fit){
             if(object$method=="PQL" && conditional){
+                WZ <- bMatProd(W,ZD)
                 WXZ <- structure(cbind(blockMatrix(WX),WZ),class="blockMatrix")
                 var.p <- bMatProd(WXZ,K)
                 var.p <- Map(`*`,WXZ,var.p)

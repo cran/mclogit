@@ -104,8 +104,7 @@ mclogit.fit <- function(
                                         "Fletcher",
                                         "Pearson",
                                         "Deviance"))
-        phi <- mclogit.dispersion(y,w,s,pi,coef,
-                                      method=odisp.method)
+        phi <- mclogit.dispersion(y,w,s,pi,coef,method=odisp.method)
     }
     else phi <- 1
 
@@ -146,8 +145,6 @@ mclogit.control <- function(
         stop("maximum number of iterations must be > 0")
     list(epsilon = epsilon, maxit = maxit, trace = trace)
 }
-
-log.Det <- function(x) determinant(x,logarithm=TRUE)$modulus
 
 mclogitP <- function(eta,s){
   expeta <- exp(eta)

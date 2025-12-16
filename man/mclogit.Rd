@@ -16,7 +16,7 @@
 \alias{anova.mclogit}
 \alias{summary.mmclogit}
 \alias{print.summary.mmclogit}
-
+\alias{ranef.mmclogit}
 
 \title{Conditional Logit Models and Mixed Conditional Logit Models}
 \description{
@@ -37,6 +37,7 @@ mclogit(formula, data=parent.frame(), random=NULL,
         method = NULL, estimator=c("ML","REML"),
         dispersion = FALSE,
         start=NULL,
+        groups = NULL,
         control=if(length(random))
                     mmclogit.control(\dots)
                 else mclogit.control(\dots), \dots)
@@ -75,14 +76,13 @@ mclogit(formula, data=parent.frame(), random=NULL,
   \item{random}{an optional formula or list of formulas that specify the
     random-effects structure or NULL.}
 
+  \item{subset}{an optional vector specifying a subset of observations
+    to be used in the fitting process.}
+
   \item{weights}{an optional vector of weights to be used in the fitting
     process.  Should be \code{NULL} or a numeric vector.}
 
-  \item{offset}{an optional model offset. Currently only supported
-    for models without random effects.}
-
-  \item{subset}{an optional vector specifying a subset of observations
-    to be used in the fitting process.}
+  \item{offset}{an optional model offset.}
 
   \item{na.action}{a function which indicates what should happen
     when the data contain \code{NA}s.  The default is set by
@@ -124,6 +124,13 @@ mclogit(formula, data=parent.frame(), random=NULL,
     a logical value -- if \code{TRUE} the default method
     (\code{"Afroz"}) is used, if \code{FALSE}, the dispersion parameter
     is set to 1, that is, no dispersion. For details see \code{\link{dispersion}}.}
+
+  \item{groups}{an optional formula that specifies groups of observations
+    relevant for the estimation of overdispersion. Covariates should be
+    constant within groups, otherwise a warning is generated
+    since the overdispersion estimate may
+    be imprecise.
+  }
   
   \item{control}{a list of parameters for the fitting process.
     See \code{\link{mclogit.control}} }
@@ -168,6 +175,13 @@ mclogit(formula, data=parent.frame(), random=NULL,
   satisfied. Since version 0.6 of the package, the function
   \code{mclogit} will complain about such model a misspecification
   explicitely.
+
+  From version 0.9.7 it is possible to choose the optimization
+  technique used for the inner iterations of the PQL/MQL: either
+  \code{\link[stats]{nlminb}} (the default), \code{\link[stats]{nlm}},
+  or any of the algorithms (other than "Brent" supported by
+  \code{\link[stats]{optim}}).  To choose the optimizer, use the
+  appropriate argument for \code{\link{mmclogit.control}} .
 }
 
 \references{
